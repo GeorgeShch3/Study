@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: posts-service-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: postsdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - posts-network
+    restart: unless-stopped
+    profiles:
+      - postgres 
+
+  app-memory:
+    build: .
+    container_name: posts-service-app-memory
+    environment:
+      STORAGE: memory
+      PORT: 8080
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    networks:
+      - posts-network
+    profiles:
+      - memory  
+
+  app-postgres:
+    build: .
+    container_name: posts-service-app-postgres
+    environment:
+      STORAGE: postgres
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/postsdb?sslmode=disable
+      PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - posts-network
+    profiles:
+      - postgres  
+
+networks:
+  posts-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
