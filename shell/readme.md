@@ -22,7 +22,7 @@ file, or a failed system call prints a message but does not crash the session.
 ## Build
 
 ```sh
-gcc -Wall -Wextra -O2 -o myshell myshell.c
+gcc -Wall -Wextra -O2 -o myshell shell.c
 ```
 
 Run it:
