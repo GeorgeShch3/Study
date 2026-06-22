@@ -1,0 +1,8 @@
+program
+{
+int a;
+string s;
+a = 1;
+s = "x";
+write(a + s);
+}

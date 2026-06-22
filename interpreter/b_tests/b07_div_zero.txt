@@ -1,0 +1,6 @@
+program
+{
+int a;
+a = 5;
+write(a / 0);
+}

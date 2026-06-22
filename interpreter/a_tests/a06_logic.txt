@@ -1,0 +1,12 @@
+program
+{
+int a, b;
+a = 5;
+b = 10;
+if (a < b and b > 0)
+write(1);
+if (a > b or b > 0)
+write(2);
+if (not (a > b))
+write(3);
+}

@@ -1,0 +1,8 @@
+program
+{
+int a = -5, b = +7, c;
+c = a + b;
+write(a);
+write(b);
+write(c);
+}

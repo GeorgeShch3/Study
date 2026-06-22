@@ -1,0 +1,7 @@
+program
+{
+int a;
+string s;
+s = "hi";
+a = s;
+}

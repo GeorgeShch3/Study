@@ -1,0 +1,10 @@
+program
+{
+int a, b;
+a = 2 + 3 * 4;
+b = (2 + 3) * 4;
+write(a);
+write(b);
+write(20 / 6);
+write(20 - 6 - 4);
+}

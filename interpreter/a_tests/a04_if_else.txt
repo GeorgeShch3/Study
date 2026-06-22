@@ -1,0 +1,13 @@
+program
+{
+int a;
+a = 3;
+if (a > 5)
+write(100);
+else
+write(200);
+if (a < 5)
+write(300);
+else
+write(400);
+}

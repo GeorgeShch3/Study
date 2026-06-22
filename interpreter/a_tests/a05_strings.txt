@@ -1,0 +1,10 @@
+program
+{
+string a = "one", b = "two", c;
+c = a + " plus " + b;
+write(c);
+if (a < b)
+write("a_less_b");
+if (a == "one")
+write("eq");
+}
