@@ -1,23 +1,27 @@
 #include <iostream>
-#include<iomanip>
+#include <iomanip>
 #include <fstream>
-#include <ctype.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+#include <cctype>
 #include <cstring>
 
 #include <vector>
 #include <string>
-
-#define SIZE_ID 128
-#define SIZE_BUF 128
-#define SIZE_FN 100
+#include <stdexcept>
 
 using namespace std;
 
-enum types_lex {
+class InterpretError : public exception {
+    string msg_;
+public:
+    explicit InterpretError(string msg) : msg_(move(msg)) {}
+
+    InterpretError(string msg, int line)
+            : msg_("line " + to_string(line) + ": " + move(msg)) {}
+
+    const char *what() const noexcept override { return msg_.c_str(); }
+};
+
+enum class types_lex {
     LEX_NULL,
     LEX_PROGRAM,
     LEX_INT, LEX_BOOL, LEX_STRING, LEX_STRING_VAL,
@@ -40,82 +44,81 @@ enum types_lex {
     POLIZ_LABEL, POLIZ_ADDRESS, POLIZ_GO, POLIZ_FGO
 };
 
-const char *TW[] = {"", "program", "int", "string", "read", "write", "if", "else",
-                    "do", "while", "true", "false", "or", "and", NULL};
-const types_lex wtypes[] = {
-        LEX_NULL,
-        LEX_PROGRAM,
-        LEX_INT, LEX_STRING,
-        LEX_READ, LEX_WRITE,
-        LEX_IF, LEX_ELSE,
-        LEX_DO, LEX_WHILE,
-        LEX_TRUE, LEX_FALSE,
-        LEX_OR, LEX_AND,
-        LEX_NULL
+enum class ValType { NONE, INT, STR };
+
+ostream &operator<<(ostream &os, types_lex t) {
+    return os << static_cast<int>(t);
+}
+
+const vector<string> TW = {"", "program", "int", "string", "read", "write", "if", "else",
+                           "do", "while", "true", "false", "or", "and", "not"};
+const vector<types_lex> wtypes = {
+        types_lex::LEX_NULL,
+        types_lex::LEX_PROGRAM,
+        types_lex::LEX_INT, types_lex::LEX_STRING,
+        types_lex::LEX_READ, types_lex::LEX_WRITE,
+        types_lex::LEX_IF, types_lex::LEX_ELSE,
+        types_lex::LEX_DO, types_lex::LEX_WHILE,
+        types_lex::LEX_TRUE, types_lex::LEX_FALSE,
+        types_lex::LEX_OR, types_lex::LEX_AND, types_lex::LEX_NOT
 };
-const char *TD[] = {"", "+", "-", "/", "*", ">", "<", ">=", "<=", "==",
-                    "!=", "=", ",", ";", "(", ")", "{", "}", "\"", "!", NULL};
-static types_lex dtypes[] = {
-        LEX_NULL,
-        LEX_PLUS, LEX_MINUS, LEX_SLASH, LEX_STAR,
-        LEX_GRT, LEX_LSS, LEX_GOE, LEX_LOE, LEX_EQ, LEX_NEQ,
-        LEX_ASSIGN,
-        LEX_COMMA, LEX_SEMICOLON, LEX_LPAREN, LEX_RPAREN, LEX_STBLOCK, LEX_FNBLOCK, LEX_QOTE,
-        LEX_NOT,
-        LEX_NULL
+const vector<string> TD = {"", "+", "-", "/", "*", ">", "<", ">=", "<=", "==",
+                           "!=", "=", ",", ";", "(", ")", "{", "}", "\"", "!"};
+const vector<types_lex> dtypes = {
+        types_lex::LEX_NULL,
+        types_lex::LEX_PLUS, types_lex::LEX_MINUS, types_lex::LEX_SLASH, types_lex::LEX_STAR,
+        types_lex::LEX_GRT, types_lex::LEX_LSS, types_lex::LEX_GOE, types_lex::LEX_LOE,
+        types_lex::LEX_EQ, types_lex::LEX_NEQ,
+        types_lex::LEX_ASSIGN,
+        types_lex::LEX_COMMA, types_lex::LEX_SEMICOLON, types_lex::LEX_LPAREN, types_lex::LEX_RPAREN,
+        types_lex::LEX_STBLOCK, types_lex::LEX_FNBLOCK, types_lex::LEX_QOTE,
+        types_lex::LEX_NOT
 };
 
 /* ------------------------- Lex ------------------------- */
 class Lex {
     types_lex type_;
-    int val_;
+    int val_ = 0;
     string str_;
-    bool bval_;
+    bool bval_ = false;
 public:
-    Lex(types_lex new_t = LEX_NULL, int new_val = 0) : type_(new_t), val_(new_val) {}
+    Lex(types_lex new_t = types_lex::LEX_NULL, int new_val = 0) : type_(new_t), val_(new_val) {}
 
     Lex(types_lex new_t, bool new_b) : type_(new_t), bval_(new_b) {}
 
-    Lex(types_lex new_t, string new_str) : type_(new_t), str_(new_str) {}
+    Lex(types_lex new_t, string new_str) : type_(new_t), str_(move(new_str)) {}
 
     types_lex get_type() const { return type_; }
 
     int get_val() const { return val_; }
 
-    string get_str() const { return str_; }
+    const string &get_str() const { return str_; }
 
     bool get_bool() const { return bval_; }
 
-    friend ostream &operator<<(ostream &os, const Lex out_lex) {
+    friend ostream &operator<<(ostream &os, const Lex &out_lex) {
         return os << "numb of type = " << out_lex.get_type() << ", value = " << out_lex.get_val() << endl;
     }
 };
 
 /* ------------------------- Ident ------------------------- */
 class Ident {
-    char *name_;
-    types_lex type_;
-    int val_;
+    string name_;
+    types_lex type_ = types_lex::LEX_NULL;
+    int val_ = 0;
     string str_;
-    bool declaration_;
-    bool assign_;
+    bool declaration_ = false;
+    bool assign_ = false;
 public:
-    Ident() : name_(nullptr), declaration_(false), assign_(false) {}
+    Ident() = default;
 
-    ~Ident() {
-        if (name_ != nullptr) delete[] name_;
-    }
+    const string &get_name() const { return name_; }
 
-    char *get_name() const { return name_; }
+    void set_name(const string &new_name) { name_ = new_name; }
 
-    void set_name(const char *new_name) {
-        name_ = new char[strlen(new_name) + 1];
-        strcpy(name_, new_name);
-    }
+    const string &get_str() const { return str_; }
 
-    string get_str() const { return str_; }
-
-    void set_str(const string new_str) { str_ = new_str; }
+    void set_str(const string &new_str) { str_ = new_str; }
 
     types_lex get_type() const { return type_; }
 
@@ -135,92 +138,70 @@ public:
 };
 
 class TableIdent {
-    Ident *table_ = nullptr;
-    int size_;
-    int top_;
+    vector<Ident> table_;
 public:
-    TableIdent(int const new_size) : size_(new_size) {
-        table_ = new Ident[new_size];
-        top_ = 1;
+    TableIdent() { table_.resize(1); }
+
+    Ident &operator[](int k) {
+        if (k < 0 || k >= static_cast<int>(table_.size()))
+            throw InterpretError("identifier table: index out of range");
+        return table_[k];
     }
 
-    ~TableIdent() {
-        if (table_ != nullptr) delete[] table_;
-    }
-
-    void set_table(int const new_size) {
-        if (table_ == nullptr) {
-            table_ = new Ident[new_size];
-            top_ = 1;
+    int put(const string &buf) {
+        for (size_t i = 1; i < table_.size(); ++i) {
+            if (buf == table_[i].get_name())
+                return static_cast<int>(i);
         }
+        table_.emplace_back();
+        table_.back().set_name(buf);
+        return static_cast<int>(table_.size()) - 1;
     }
-
-    Ident &operator[](const int k) { return table_[k]; }
-
-    int get_size() const { return size_; }
-
-    int put(const char *buf) {
-        for (int i = 1; i < top_; i++) {
-            if (!strcmp(buf, table_[i].get_name()))
-                return i;
-        }
-        table_[top_].set_name(buf);
-        top_++;
-        return top_ - 1;
-    }
-} TID(SIZE_ID);
+};
 
 /* ------------------------- Lexer ------------------------- */
 class Lexer {
-    FILE *fd;
-    char c;
-    char buf[SIZE_BUF];
-    int buf_top;
-    bool not_eof = true;
+    ifstream fd;
+    int c;
+    int line_ = 1;
 
     enum state {
         H, IDENT, NUMB, COM, COM2, QOUT, COMPR, NOT, DELIM, FIN_OF_FILE, SLASH
     } G;
 
-    void clear() {
-        buf_top = 0;
-        for (int i = 0; i < SIZE_BUF; i++) buf[i] = 0;
+    void get_symb() {
+        if (c == '\n') line_++;
+        c = fd.get();
     }
 
-    void add() { buf[buf_top++] = c; }
-
-    void get_symb() { c = fgetc(fd); }
-
-    int define_type(const char *buf, const char **table) { // table = TW | TD
-        int i = 0;
-        while (table[i]) {
-            if (!strcmp(buf, table[i])) return i;
-            ++i;
-        }
+    static int define_type(const string &buf, const vector<string> &table) {
+        for (size_t i = 0; i < table.size(); ++i)
+            if (buf == table[i]) return static_cast<int>(i);
         return 0;
     }
 
+    TableIdent &tid;
+    bool not_eof = true;
+
 public:
-    Lexer(
-            const char *path) {
-        if ((fd = fopen(path, "r")) == NULL) {
-            cout << "Error: file didn't open" << endl;
-            exit(1);
-        }
-        clear();
+    Lexer(const string &path, TableIdent &t) : tid(t) {
+        fd.open(path);
+        if (!fd.is_open())
+            throw InterpretError("file didn't open: " + path);
         get_symb();
     }
 
-    ~Lexer() { fclose(fd); }
-
     bool is_eof() const { return not_eof; }
+
+    int get_line() const { return line_; }
 
     Lex get_lex();
 };
 
 Lex Lexer::get_lex() {
-    int digit;
+    int digit = 0;
     int num;
+    string buf;
     string str;
 
     G = H;
@@ -229,9 +210,12 @@ Lex Lexer::get_lex() {
             case H:
                 if (c == '\n' || c == '\r' || c == ' ' || c == '\t')
                     get_symb();
-                else if (isalpha(c)) {
-                    clear();
-                    add();
+                else if (c == '#') {
+                    get_symb();
+                    G = COM2;
+                } else if (isalpha(c)) {
+                    buf.clear();
+                    buf.push_back(static_cast<char>(c));
                     get_symb();
                     G = IDENT;
                 } else if (isdigit(c)) {
@@ -239,8 +223,7 @@ Lex Lexer::get_lex() {
                     get_symb();
                     G = NUMB;
                 } else if (c == '/') {
-                    clear();
-                    add();
+                    buf = "/";
                     get_symb();
                     if (c == '*') {
                         get_symb();
@@ -251,35 +234,32 @@ Lex Lexer::get_lex() {
                     get_symb();
                     G = QOUT;
                 } else if (c == '<' || c == '>' || c == '=') {
-                    clear();
-                    add();
+                    buf.clear();
+                    buf.push_back(static_cast<char>(c));
                     get_symb();
                     G = COMPR;
                 } else if (c == '!') {
-                    clear();
-                    add();
+                    buf.clear();
+                    buf.push_back(static_cast<char>(c));
                     get_symb();
                     G = NOT;
                 } else if (c != EOF) {
-                    clear();
-                    add();
+                    buf.clear();
+                    buf.push_back(static_cast<char>(c));
                     G = DELIM;
-                } else if (c == '#') {
-                    G = COM2;
                 } else
                     G = FIN_OF_FILE;
                 break;
 
             case IDENT:
                 if (isalpha(c) || isdigit(c)) {
-                    add();
+                    buf.push_back(static_cast<char>(c));
                     get_symb();
                 } else if ((num = define_type(buf, TW)))
                     return Lex(wtypes[num], num);
-                else // variable
-                {
-                    num = TID.put(buf); // new or old
-                    return Lex(LEX_ID, num);
+                else {
+                    num = tid.put(buf);
+                    return Lex(types_lex::LEX_ID, num);
                 }
                 break;
 
@@ -288,7 +268,7 @@ Lex Lexer::get_lex() {
                     digit = digit * 10 + c - '0';
                     get_symb();
                 } else
-                    return Lex(LEX_NUM, digit);
+                    return Lex(types_lex::LEX_NUM, digit);
                 break;
 
             case COM:
@@ -300,17 +280,20 @@ Lex Lexer::get_lex() {
                     }
                 } else if (c != EOF)
                     get_symb();
-                else if (c == EOF)
+                else
                     G = FIN_OF_FILE;
                 break;
+
             case COM2:
-                if (c == '\n')
+                if (c == '\n') {
+                    get_symb();
                     G = H;
-                else if (cin.eof()){
-                    G = H;
-                    break;
-                }
+                } else if (c == EOF)
+                    G = FIN_OF_FILE;
+                else
+                    get_symb();
                 break;
+
             case SLASH:
                 num = define_type(buf, TD);
                 return Lex(dtypes[num], num);
@@ -318,26 +301,25 @@ Lex Lexer::get_lex() {
             case QOUT:
                 if (c == '"') {
                     get_symb();
-                    return Lex(LEX_STRING_VAL, str);
+                    return Lex(types_lex::LEX_STRING_VAL, str);
                 } else if (c != EOF) {
-                    str.push_back(c);
+                    str.push_back(static_cast<char>(c));
                     get_symb();
-                } else if (c == EOF)
+                } else
                     G = FIN_OF_FILE;
                 break;
 
             case COMPR:
                 if (c == '=') {
-                    add();
+                    buf.push_back(static_cast<char>(c));
                     get_symb();
                 }
                 num = define_type(buf, TD);
                 return Lex(dtypes[num], num);
-                return Lex(dtypes[num], num);
 
             case NOT:
                 if (c == '=') {
-                    add();
+                    buf.push_back(static_cast<char>(c));
                     get_symb();
                 }
                 num = define_type(buf, TD);
@@ -347,8 +329,9 @@ Lex Lexer::get_lex() {
                 if ((num = define_type(buf, TD))) {
                     get_symb();
                     return Lex(dtypes[num], num);
-                } else if (c != '!')
-                    throw c;
+                } else
+                    throw InterpretError(
+                            string("unexpected symbol '") + static_cast<char>(c) + "'", line_);
 
             case FIN_OF_FILE:
                 not_eof = false;
@@ -370,49 +353,49 @@ public:
         if (!is_full())
             s[top++] = t;
         else
-            throw "Stack is full";
+            throw InterpretError("stack overflow");
     }
 
     T pop() {
         if (!is_empty())
             return s[--top];
         else
-            throw "Stack is empty";
+            throw InterpretError("stack underflow");
     }
 
     void reset() { top = 0; }
 
     bool is_empty() const { return top == 0; }
 
-    bool is_full() const { return top == max_size - 1; }
+    bool is_full() const { return top == max_size; }
 };
 
 /* ------------------------- Function ------------------------- */
 class Function {
-    char *name = nullptr;
-    int poliz_num;
+    string name;
+    int poliz_num = 0;
     int num_str = 0;
     int num_int = 0;
-    types_lex array[30];
-    int index = 0;
+    vector<types_lex> array;
 
 public:
-    Function() {}
+    Function() = default;
 
-    char *get_name() const { return name; }
+    const string &get_name() const { return name; }
 
-    void set_name(const char *n) {
-        name = new char[strlen(n) + 1];
-        strcpy(name, n);
-    }
+    void set_name(const string &n) { name = n; }
 
     void add_int() { num_int++; }
 
     void add_str() { num_str++; }
 
-    void push(types_lex l) { array[index++] = l; }
+    void push(types_lex l) { array.push_back(l); }
 
-    types_lex get_el(int i) const { return array[i]; }
+    types_lex get_el(int i) const {
+        if (i < 0 || i >= static_cast<int>(array.size()))
+            throw InterpretError("function args: index out of range");
+        return array[i];
+    }
 
     void set_num_str(int i) { num_str = i; }
 
@@ -427,9 +410,9 @@ public:
     int get_poliz_num() const { return poliz_num; }
 
     void add_var(types_lex l) {
-        if (l == LEX_INT)
+        if (l == types_lex::LEX_INT)
             add_int();
-        else if (l == LEX_STRING)
+        else if (l == types_lex::LEX_STRING)
             add_str();
         else
             throw l;
@@ -438,107 +421,96 @@ public:
 };
 
 class FTable {
-    Function *table = nullptr;
-    int top;
-    int size;
+    vector<Function> table;
 
 public:
-    FTable(int const size) : size(size) {
-        table = new Function[size];
-        top = 1;
+    FTable() { table.resize(1); }
+
+    int put(const string &buf) {
+        table.emplace_back();
+        table.back().set_name(buf);
+        return static_cast<int>(table.size()) - 1;
     }
 
-    ~FTable() {
-        if (table != nullptr)
-            delete[] table;
+    Function &operator[](int i) {
+        if (i < 0 || i >= static_cast<int>(table.size()))
+            throw InterpretError("function table: index out of range");
+        return table[i];
     }
 
-    int put(const char *buf) {
-        table[top].set_name(buf);
-        top++;
-        return top - 1;
-    }
-
-    Function &operator[](int i) { return table[i]; }
-
-    bool check_fn(const char *buf) const {
-        for (int i = 1; i < top; i++)
-            if (!strcmp(buf, table[i].get_name()))
+    bool check_fn(const string &buf) const {
+        for (size_t i = 1; i < table.size(); ++i)
+            if (buf == table[i].get_name())
                 return true;
         return false;
     }
 
-    int get_top() const { return top; }
-} FN(SIZE_FN);
+    int get_top() const { return static_cast<int>(table.size()); }
+};
 
 /* ------------------------- Poliz ------------------------- */
 class Poliz {
-    Lex *p = nullptr;
-    int size; // фактический размер
-    int free; // текущая позиция куда можно закинуть лексему
+    vector<Lex> p;
+    int free_ = 0;
 
 public:
-    Poliz(int max_size) {
-        p = new Lex[max_size];
-        size = max_size;
-        free = 0;
-    }
-
-    ~Poliz() { delete[] p; }
+    Poliz(int max_size) { p.resize(max_size); }
 
     void put_lex(Lex l) {
-        p[free] = l;
-        free++;
+        p[free_] = move(l);
+        free_++;
     }
 
-    types_lex get_c_type() { return p[free - 1].get_type(); }
+    types_lex get_c_type() { return p[free_ - 1].get_type(); }
 
-    void put_lex(Lex l, int place) { p[place] = l; } // для цикла for
+    void put_lex(Lex l, int place) { p[place] = move(l); }
 
-    void blank() { free++; }
+    void blank() { free_++; }
 
-    int get_free() const { return free; }
+    int get_free() const { return free_; }
 
     Lex &operator[](int ident) {
-        if (ident > size)
-            throw "Poliz: out of array";
-        if (ident > free)
-            throw "Poliz: indefine element of array";
+        if (ident < 0 || ident >= static_cast<int>(p.size()))
+            throw InterpretError("Poliz: out of array");
+        if (ident >= free_)
+            throw InterpretError("Poliz: indefinite element of array");
         return p[ident];
     }
 
     void print() {
-        for (int i = 0; i < free; i++) cout << p[i];
+        for (int i = 0; i < free_; i++) cout << p[i];
     }
 };
 
 /* ------------------------- Parser ------------------------- */
 class Parser {
     Lex curr_lex;
-    types_lex c_type;
-    int c_IntVal;
+    types_lex c_type = types_lex::LEX_NULL;
+    int c_IntVal = 0;
     string c_StrVal;
-    int IntVal;
-    string StrVal;
 
-    Stack<int, 100> st_int;
-    Stack<string, 100> st_str;
     Stack<types_lex, 100> st_lex;
 
-    types_lex tmp;
+    types_lex tmp = types_lex::LEX_NULL;
 
+    TableIdent &TID;
+    FTable &FN;
     Lexer scan;
+
+    InterpretError err(const string &what) {
+        return InterpretError(what, scan.get_line());
+    }
 
     void check_id() {
         if (TID[c_IntVal].get_declaration())
             st_lex.push(TID[c_IntVal].get_type());
         else
-            throw "not declarated";
+            throw err("identifier is not declared");
     }
 
     void check_semicolon() {
-        if (c_type != LEX_SEMICOLON)
-            throw curr_lex;
+        if (c_type != types_lex::LEX_SEMICOLON)
+            throw err("';' expected");
         get_lex();
     }
 
@@ -550,11 +522,11 @@ class Parser {
     }
 
     void check_not() {
-        if (st_lex.pop() != LEX_BOOL)
-            throw "wrong type is in not";
+        if (st_lex.pop() != types_lex::LEX_BOOL)
+            throw err("boolean operand expected for '!'");
         else {
-            st_lex.push(LEX_BOOL);
-            prog.put_lex(Lex(LEX_NOT, 0));
+            st_lex.push(types_lex::LEX_BOOL);
+            prog.put_lex(Lex(types_lex::LEX_NOT, 0));
         }
     }
 
@@ -565,58 +537,61 @@ class Parser {
         t1 = st_lex.pop();
         t = t1;
         if (t1 == t2) {
-            if (t == LEX_BOOL) {
-                if (op == LEX_AND || op == LEX_OR)
-                    r = LEX_BOOL;
+            if (t == types_lex::LEX_BOOL) {
+                if (op == types_lex::LEX_AND || op == types_lex::LEX_OR)
+                    r = types_lex::LEX_BOOL;
                 else
-                    throw op;
-            } else if (t == LEX_INT) {
-                if (op == LEX_EQ || op == LEX_NEQ || op == LEX_GRT || op == LEX_LSS || op == LEX_GOE || op == LEX_LOE)
-                    r = LEX_BOOL;
-                else if (op == LEX_MINUS || op == LEX_PLUS || op == LEX_SLASH || op == LEX_STAR)
-                    r = LEX_INT;
+                    throw err("invalid operator for boolean operands");
+            } else if (t == types_lex::LEX_INT) {
+                if (op == types_lex::LEX_EQ || op == types_lex::LEX_NEQ || op == types_lex::LEX_GRT ||
+                    op == types_lex::LEX_LSS || op == types_lex::LEX_GOE || op == types_lex::LEX_LOE)
+                    r = types_lex::LEX_BOOL;
+                else if (op == types_lex::LEX_MINUS || op == types_lex::LEX_PLUS || op == types_lex::LEX_SLASH ||
+                         op == types_lex::LEX_STAR)
+                    r = types_lex::LEX_INT;
                 else
-                    throw op;
-            } else if (t == LEX_STRING) {
-                if (op == LEX_EQ || op == LEX_NEQ || op == LEX_GRT || op == LEX_LSS || op == LEX_GOE || op == LEX_LOE)
-                    r = LEX_BOOL;
-                else if (op == LEX_PLUS)
-                    r = LEX_STRING;
+                    throw err("invalid operator for int operands");
+            } else if (t == types_lex::LEX_STRING) {
+                if (op == types_lex::LEX_EQ || op == types_lex::LEX_NEQ || op == types_lex::LEX_GRT ||
+                    op == types_lex::LEX_LSS || op == types_lex::LEX_GOE || op == types_lex::LEX_LOE)
+                    r = types_lex::LEX_BOOL;
+                else if (op == types_lex::LEX_PLUS)
+                    r = types_lex::LEX_STRING;
                 else
-                    throw op;
+                    throw err("invalid operator for string operands");
             } else
-                throw t;
+                throw err("invalid operand type in expression");
         } else
-            throw t2;
+            throw err("operand types do not match");
         st_lex.push(r);
         prog.put_lex(Lex(op, 0));
     }
 
     void eq_bool() {
-        if (st_lex.pop() != LEX_BOOL)
-            throw "expression is not boolean";
+        if (st_lex.pop() != types_lex::LEX_BOOL)
+            throw err("expression is not boolean");
     }
 
     void eq_type() {
         if (st_lex.pop() != st_lex.pop())
-            throw "wrong types are in assignment";
+            throw err("type mismatch in assignment");
     }
 
     void check_Lparen() {
-        if (c_type != LEX_LPAREN)
-            throw curr_lex;
+        if (c_type != types_lex::LEX_LPAREN)
+            throw err("'(' expected");
         get_lex();
     }
 
     void check_Rparen() {
-        if (c_type != LEX_RPAREN)
-            throw curr_lex;
+        if (c_type != types_lex::LEX_RPAREN)
+            throw err("')' expected");
         get_lex();
     }
 
     void check_decl() {
         if (!TID[c_IntVal].get_declaration())
-            throw curr_lex;
+            throw err("identifier is not declared");
     }
 
     void P();
@@ -644,7 +619,8 @@ class Parser {
 public:
     Poliz prog;
 
-    Parser(char *program) : scan(program), prog(1000) {}
+    Parser(const string &program, TableIdent &tid, FTable &fn)
+            : TID(tid), FN(fn), scan(program, tid), prog(1000) {}
 
     void analyze();
 };
@@ -659,33 +635,33 @@ void Parser::analyze() {
 }
 
 void Parser::P() {
-    if (c_type != LEX_PROGRAM)
-        throw curr_lex;
+    if (c_type != types_lex::LEX_PROGRAM)
+        throw err("'program' expected");
     get_lex();
     B();
 }
 
 void Parser::B() {
-    if (c_type == LEX_STBLOCK) {
+    if (c_type == types_lex::LEX_STBLOCK) {
         get_lex();
-        while (c_type != LEX_FNBLOCK) {
+        while (c_type != types_lex::LEX_FNBLOCK) {
             S();
         }
         get_lex();
     } else
-        throw curr_lex;
+        throw err("'{' expected");
 }
 
 void Parser::S() {
     int pl0, pl1, pl2, pl3;
 
-    if (c_type == LEX_STRING) {
+    if (c_type == types_lex::LEX_STRING) {
         get_lex();
         STR();
-    } else if (c_type == LEX_INT) {
+    } else if (c_type == types_lex::LEX_INT) {
         get_lex();
         I();
-    } else if (c_type == LEX_IF) {
+    } else if (c_type == types_lex::LEX_IF) {
         get_lex();
         check_Lparen();
         PE();
@@ -693,29 +669,29 @@ void Parser::S() {
         check_Rparen();
         pl2 = prog.get_free();
         prog.blank();
-        prog.put_lex(Lex(POLIZ_FGO, 0));
+        prog.put_lex(Lex(types_lex::POLIZ_FGO, 0));
 
-        if (c_type == LEX_STBLOCK)
+        if (c_type == types_lex::LEX_STBLOCK)
             B();
         else
             S();
 
-        if (c_type == LEX_ELSE) {
+        if (c_type == types_lex::LEX_ELSE) {
             pl3 = prog.get_free();
             prog.blank();
-            prog.put_lex(Lex(POLIZ_GO, 0));
-            prog.put_lex(Lex(POLIZ_LABEL, prog.get_free()), pl2);
+            prog.put_lex(Lex(types_lex::POLIZ_GO, 0));
+            prog.put_lex(Lex(types_lex::POLIZ_LABEL, prog.get_free()), pl2);
             get_lex();
-            if (c_type == LEX_STBLOCK) {
+            if (c_type == types_lex::LEX_STBLOCK) {
                 B();
-                prog.put_lex(Lex(POLIZ_LABEL, prog.get_free()), pl3);
+                prog.put_lex(Lex(types_lex::POLIZ_LABEL, prog.get_free()), pl3);
             } else {
                 S();
-                prog.put_lex(Lex(POLIZ_LABEL, prog.get_free()), pl3);
+                prog.put_lex(Lex(types_lex::POLIZ_LABEL, prog.get_free()), pl3);
             }
         } else
-            prog.put_lex(Lex(POLIZ_LABEL, prog.get_free()), pl2);
-    } else if (c_type == LEX_WHILE) {
+            prog.put_lex(Lex(types_lex::POLIZ_LABEL, prog.get_free()), pl2);
+    } else if (c_type == types_lex::LEX_WHILE) {
         pl0 = prog.get_free();
         get_lex();
         check_Lparen();
@@ -724,44 +700,42 @@ void Parser::S() {
         check_Rparen();
         pl1 = prog.get_free();
         prog.blank();
-        prog.put_lex(Lex(POLIZ_FGO, 0));
+        prog.put_lex(Lex(types_lex::POLIZ_FGO, 0));
 
-        if (c_type == LEX_STBLOCK)
+        if (c_type == types_lex::LEX_STBLOCK)
             B();
         else
             S();
 
-        prog.put_lex(Lex(POLIZ_LABEL, pl0));
-        prog.put_lex(Lex(POLIZ_GO, 0));
-        prog.put_lex(Lex(POLIZ_LABEL, prog.get_free()), pl1);
-    } else if (c_type == LEX_READ) {
+        prog.put_lex(Lex(types_lex::POLIZ_LABEL, pl0));
+        prog.put_lex(Lex(types_lex::POLIZ_GO, 0));
+        prog.put_lex(Lex(types_lex::POLIZ_LABEL, prog.get_free()), pl1);
+    } else if (c_type == types_lex::LEX_READ) {
         int i;
         i = FN.put("read");
         get_lex();
         check_Lparen();
-        while (c_type == LEX_ID) {
-            if (c_type != LEX_ID)
-                throw curr_lex;
+        while (c_type == types_lex::LEX_ID) {
             check_decl();
             FN[i].add_var(TID[c_IntVal].get_type());
-            prog.put_lex(Lex(POLIZ_ADDRESS, c_IntVal));
+            prog.put_lex(Lex(types_lex::POLIZ_ADDRESS, c_IntVal));
             get_lex();
-            if (c_type == LEX_COMMA)
+            if (c_type == types_lex::LEX_COMMA)
                 get_lex();
             else break;
         }
         check_Rparen();
         check_semicolon();
         FN[i].set_poliz_num(prog.get_free());
-        prog.put_lex(Lex(LEX_READ, 0));
-    } else if (c_type == LEX_WRITE) {
+        prog.put_lex(Lex(types_lex::LEX_READ, 0));
+    } else if (c_type == types_lex::LEX_WRITE) {
         int i;
         i = FN.put("write");
         get_lex();
         check_Lparen();
         E();
         FN[i].add_var(tmp);
-        while (c_type == LEX_COMMA) {
+        while (c_type == types_lex::LEX_COMMA) {
             get_lex();
             E();
             FN[i].add_var(tmp);
@@ -769,89 +743,96 @@ void Parser::S() {
         check_Rparen();
         check_semicolon();
         FN[i].set_poliz_num(prog.get_free());
-        prog.put_lex(Lex(LEX_WRITE, 0));
-    } else if (c_type == LEX_ID) {
+        prog.put_lex(Lex(types_lex::LEX_WRITE, 0));
+    } else if (c_type == types_lex::LEX_ID) {
         check_id();
-        prog.put_lex(Lex(POLIZ_ADDRESS, c_IntVal));
+        prog.put_lex(Lex(types_lex::POLIZ_ADDRESS, c_IntVal));
         get_lex();
-        if (c_type == LEX_ASSIGN) {
+        if (c_type == types_lex::LEX_ASSIGN) {
             get_lex();
             DE();
             eq_type();
-            prog.put_lex(Lex(LEX_ASSIGN, 0));
+            prog.put_lex(Lex(types_lex::LEX_ASSIGN, 0));
         } else
-            throw curr_lex;
+            throw err("'=' expected");
         check_semicolon();
-        prog.put_lex(Lex(LEX_SEMICOLON, 0));
+        prog.put_lex(Lex(types_lex::LEX_SEMICOLON, 0));
     } else
         B();
 }
 
 void Parser::STR() {
-    if (c_type != LEX_ID)
-        throw curr_lex;
+    if (c_type != types_lex::LEX_ID)
+        throw err("identifier expected in declaration");
 
     int var_num;
-    while (c_type != LEX_SEMICOLON) {
-        if (c_type != LEX_ID)
-            throw curr_lex;
+    while (c_type != types_lex::LEX_SEMICOLON) {
+        if (c_type != types_lex::LEX_ID)
+            throw err("identifier expected in declaration");
 
         var_num = c_IntVal;
         if (TID[c_IntVal].get_declaration() == true)
-            throw "double declaration";
+            throw err("double declaration");
 
         TID[var_num].set_declaration();
-        TID[var_num].set_type(LEX_STRING);
+        TID[var_num].set_type(types_lex::LEX_STRING);
 
-        get_lex(); // comma || assign
-        if (c_type == LEX_ASSIGN) {
-            prog.put_lex(Lex(POLIZ_ADDRESS, var_num));
+        get_lex();
+        if (c_type == types_lex::LEX_ASSIGN) {
+            prog.put_lex(Lex(types_lex::POLIZ_ADDRESS, var_num));
             get_lex();
-            if (c_type == LEX_STRING_VAL) {
+            if (c_type == types_lex::LEX_STRING_VAL) {
                 TID[var_num].set_assign();
-                prog.put_lex(Lex(LEX_STRING_VAL, c_StrVal));
-                prog.put_lex(Lex(LEX_ASSIGN, 0));
-                prog.put_lex(Lex(LEX_SEMICOLON, 0));
+                prog.put_lex(Lex(types_lex::LEX_STRING_VAL, c_StrVal));
+                prog.put_lex(Lex(types_lex::LEX_ASSIGN, 0));
+                prog.put_lex(Lex(types_lex::LEX_SEMICOLON, 0));
             } else
-                throw curr_lex;
-            get_lex(); // comma || semicolon
+                throw err("string literal expected");
+            get_lex();
         }
-        if (c_type == LEX_COMMA)
+        if (c_type == types_lex::LEX_COMMA)
             get_lex();
     }
     check_semicolon();
 }
 
 void Parser::I() {
-    if (c_type != LEX_ID)
-        throw curr_lex;
+    if (c_type != types_lex::LEX_ID)
+        throw err("identifier expected in declaration");
 
     int var_num;
-    while (c_type != LEX_SEMICOLON) {
-        if (c_type != LEX_ID)
-            throw curr_lex;
+    while (c_type != types_lex::LEX_SEMICOLON) {
+        if (c_type != types_lex::LEX_ID)
+            throw err("identifier expected in declaration");
 
         var_num = c_IntVal;
         if (TID[c_IntVal].get_declaration() == true)
-            throw "double declaration";
+            throw err("double declaration");
 
         TID[var_num].set_declaration();
-        TID[var_num].set_type(LEX_INT);
+        TID[var_num].set_type(types_lex::LEX_INT);
 
-        get_lex(); // comma || assign
-        if (c_type == LEX_ASSIGN) {
-            prog.put_lex(Lex(POLIZ_ADDRESS, var_num));
+        get_lex();
+        if (c_type == types_lex::LEX_ASSIGN) {
+            prog.put_lex(Lex(types_lex::POLIZ_ADDRESS, var_num));
             get_lex();
-            if (c_type == LEX_NUM) {
+            int sign = 1;
+            if (c_type == types_lex::LEX_PLUS) {
+                get_lex();
+            } else if (c_type == types_lex::LEX_MINUS) {
+                sign = -1;
+                get_lex();
+            }
+            if (c_type == types_lex::LEX_NUM) {
                 TID[var_num].set_assign();
-                prog.put_lex(Lex(LEX_NUM, c_IntVal));
-                prog.put_lex(Lex(LEX_ASSIGN, 0));
-                prog.put_lex(Lex(LEX_SEMICOLON, 0));
+                prog.put_lex(Lex(types_lex::LEX_NUM, sign * c_IntVal));
+                prog.put_lex(Lex(types_lex::LEX_ASSIGN, 0));
+                prog.put_lex(Lex(types_lex::LEX_SEMICOLON, 0));
             } else
-                throw curr_lex;
-            get_lex(); // comma || semicolon
+                throw err("number expected");
+            get_lex();
         }
-        if (c_type == LEX_COMMA)
+        if (c_type == types_lex::LEX_COMMA)
             get_lex();
     }
     check_semicolon();
@@ -860,35 +841,35 @@ void Parser::I() {
 void Parser::DE() {
     int count = 0;
     E();
-    while (prog.get_c_type() == POLIZ_ADDRESS) {
+    while (prog.get_c_type() == types_lex::POLIZ_ADDRESS) {
         count++;
         get_lex();
-        if (c_type == LEX_ID) {
+        if (c_type == types_lex::LEX_ID) {
             check_id();
             int i = c_IntVal;
             get_lex();
-            if (c_type == LEX_ASSIGN)
-                prog.put_lex(Lex(POLIZ_ADDRESS, i));
+            if (c_type == types_lex::LEX_ASSIGN)
+                prog.put_lex(Lex(types_lex::POLIZ_ADDRESS, i));
             else
-                prog.put_lex(Lex(LEX_ID, i));
+                prog.put_lex(Lex(types_lex::LEX_ID, i));
         }
-        if (c_type == LEX_NUM) {
-            st_lex.push(LEX_INT);
+        if (c_type == types_lex::LEX_NUM) {
+            st_lex.push(types_lex::LEX_INT);
             prog.put_lex(curr_lex);
             get_lex();
-        } else if (c_type == LEX_STRING_VAL) {
-            st_lex.push(LEX_STRING);
+        } else if (c_type == types_lex::LEX_STRING_VAL) {
+            st_lex.push(types_lex::LEX_STRING);
             prog.put_lex(curr_lex);
             get_lex();
         }
     }
     for (int i = 0; i < count; i++)
-        prog.put_lex(Lex(LEX_ASSIGN, 0));
+        prog.put_lex(Lex(types_lex::LEX_ASSIGN, 0));
 }
 
 void Parser::PE() {
     E();
-    if (c_type == LEX_AND || c_type == LEX_OR) {
+    if (c_type == types_lex::LEX_AND || c_type == types_lex::LEX_OR) {
         st_lex.push(c_type);
         get_lex();
         PE();
@@ -898,8 +879,8 @@ void Parser::PE() {
 
 void Parser::E() {
     E1();
-    if (c_type == LEX_EQ || c_type == LEX_LSS || c_type == LEX_GRT || c_type == LEX_LOE || c_type == LEX_GOE ||
-        c_type == LEX_NEQ) {
+    if (c_type == types_lex::LEX_EQ || c_type == types_lex::LEX_LSS || c_type == types_lex::LEX_GRT ||
+        c_type == types_lex::LEX_LOE || c_type == types_lex::LEX_GOE || c_type == types_lex::LEX_NEQ) {
         st_lex.push(c_type);
         get_lex();
         E1();
@@ -909,7 +890,7 @@ void Parser::E() {
 
 void Parser::E1() {
     T();
-    while (c_type == LEX_PLUS || c_type == LEX_MINUS) {
+    while (c_type == types_lex::LEX_PLUS || c_type == types_lex::LEX_MINUS) {
         st_lex.push(c_type);
         get_lex();
         T();
@@ -919,7 +900,7 @@ void Parser::E1() {
 
 void Parser::T() {
     F();
-    while (c_type == LEX_STAR || c_type == LEX_SLASH) {
+    while (c_type == types_lex::LEX_STAR || c_type == types_lex::LEX_SLASH) {
         st_lex.push(c_type);
         get_lex();
         F();
@@ -928,76 +909,81 @@ void Parser::T() {
 }
 
 void Parser::F() {
-    if (c_type == LEX_ID) {
+    if (c_type == types_lex::LEX_ID) {
         check_id();
         int i = c_IntVal;
         tmp = TID[i].get_type();
         get_lex();
-        if (c_type == LEX_ASSIGN)
-            prog.put_lex(Lex(POLIZ_ADDRESS, i));
+        if (c_type == types_lex::LEX_ASSIGN)
+            prog.put_lex(Lex(types_lex::POLIZ_ADDRESS, i));
         else
-            prog.put_lex(Lex(LEX_ID, i));
-    } else if (c_type == LEX_NUM) {
-        tmp = LEX_INT;
-        st_lex.push(LEX_INT);
+            prog.put_lex(Lex(types_lex::LEX_ID, i));
+    } else if (c_type == types_lex::LEX_NUM) {
+        tmp = types_lex::LEX_INT;
+        st_lex.push(types_lex::LEX_INT);
         prog.put_lex(curr_lex);
         get_lex();
-    } else if (c_type == LEX_STRING_VAL) {
-        tmp = LEX_STRING;
-        st_lex.push(LEX_STRING);
+    } else if (c_type == types_lex::LEX_STRING_VAL) {
+        tmp = types_lex::LEX_STRING;
+        st_lex.push(types_lex::LEX_STRING);
         prog.put_lex(curr_lex);
         get_lex();
-    } else if (c_type == LEX_TRUE) {
-        st_lex.push(LEX_BOOL);
-        prog.put_lex(Lex(LEX_TRUE, true));
+    } else if (c_type == types_lex::LEX_TRUE) {
+        st_lex.push(types_lex::LEX_BOOL);
+        prog.put_lex(Lex(types_lex::LEX_TRUE, true));
         get_lex();
-    } else if (c_type == LEX_FALSE) {
-        st_lex.push(LEX_BOOL);
-        prog.put_lex(Lex(LEX_FALSE, false));
+    } else if (c_type == types_lex::LEX_FALSE) {
+        st_lex.push(types_lex::LEX_BOOL);
+        prog.put_lex(Lex(types_lex::LEX_FALSE, false));
         get_lex();
-    } else if (c_type == LEX_NOT) {
+    } else if (c_type == types_lex::LEX_NOT) {
         get_lex();
         F();
         check_not();
-    } else if (c_type == LEX_LPAREN) {
+    } else if (c_type == types_lex::LEX_LPAREN) {
         get_lex();
         E();
-        if (c_type == LEX_RPAREN)
+        if (c_type == types_lex::LEX_RPAREN)
             get_lex();
         else
-            throw curr_lex;
+            throw err("')' expected");
     } else
-        throw curr_lex;
+        throw err("operand expected in expression");
 }
 
 /* ------------------------- Executer ------------------------- */
 class Executer {
     Lex pc_el;
-    int flag = 0;
+    ValType flag = ValType::NONE;
+
+    TableIdent &TID;
+    FTable &FN;
 
 public:
-    int get_flag() const { return flag; }
+    Executer(TableIdent &tid, FTable &fn) : TID(tid), FN(fn) {}
 
-    void rezero_flag() { flag = 0; }
+    ValType get_flag() const { return flag; }
 
-    void set_flag_int() { flag = 100; }
+    void rezero_flag() { flag = ValType::NONE; }
 
-    void set_flag_string() { flag = 1000; }
+    void set_flag_int() { flag = ValType::INT; }
 
-    bool flag_is_int() const { return flag == 100; }
+    void set_flag_string() { flag = ValType::STR; }
 
-    bool flag_is_string() const { return flag == 1000; }
+    bool flag_is_int() const { return flag == ValType::INT; }
+
+    bool flag_is_string() const { return flag == ValType::STR; }
 
     void execute(Poliz &prog);
 };
 
 void Executer::execute(Poliz &prog) {
-    Stack<int, 100> st_var;         //переменные
-    Stack<int, 100> st_move;        //переход
-    Stack<bool, 100> st_bool;       //bool
-    Stack<int, 100> st_num;         //числа
+    Stack<int, 100> st_var;
+    Stack<int, 100> st_move;
+    Stack<bool, 100> st_bool;
+    Stack<int, 100> st_num;
     Stack<int, 100> st_wr_num;
-    Stack<string, 100> st_str;      //строки
+    Stack<string, 100> st_str;
     Stack<string, 100> st_wr_str;
     int i, j, index = 0, f_index = 100, size = prog.get_free();
     string str;
@@ -1006,90 +992,89 @@ void Executer::execute(Poliz &prog) {
     while (index < size) {
         pc_el = prog[index];
         switch (pc_el.get_type()) {
-            case LEX_TRUE:
-            case LEX_FALSE:
+            case types_lex::LEX_TRUE:
+            case types_lex::LEX_FALSE:
                 st_bool.push(pc_el.get_bool());
                 break;
-            case LEX_NUM:
+            case types_lex::LEX_NUM:
                 set_flag_int();
                 st_num.push(pc_el.get_val());
                 break;
-            case LEX_STRING_VAL:
+            case types_lex::LEX_STRING_VAL:
                 set_flag_string();
                 st_str.push(pc_el.get_str());
                 break;
-            case POLIZ_LABEL:
+            case types_lex::POLIZ_LABEL:
                 st_move.push(pc_el.get_val());
                 break;
-            case POLIZ_ADDRESS:
+            case types_lex::POLIZ_ADDRESS:
                 st_var.push(pc_el.get_val());
                 break;
-            case LEX_ID:
+            case types_lex::LEX_ID:
                 i = pc_el.get_val();
                 if (TID[i].get_assign()) {
-                    if (TID[i].get_type() == LEX_STRING) {
+                    if (TID[i].get_type() == types_lex::LEX_STRING) {
                         set_flag_string();
-                        st_str.push(TID[i].get_name());
+                        st_str.push(TID[i].get_str());
                     } else {
                         set_flag_int();
                         st_num.push(TID[i].get_val());
                     }
                     break;
                 } else
-                    throw "POLIZ: indefinite identifier";
-            case LEX_NOT:
+                    throw InterpretError("runtime: identifier used before assignment");
+            case types_lex::LEX_NOT:
                 st_bool.push(!st_bool.pop());
                 break;
-            case LEX_OR:
+            case types_lex::LEX_OR:
                 t = st_bool.pop();
                 st_bool.push(st_bool.pop() || t);
                 break;
-            case LEX_AND:
+            case types_lex::LEX_AND:
                 t = st_bool.pop();
                 st_bool.push(st_bool.pop() && t);
                 break;
-            case POLIZ_GO:
+            case types_lex::POLIZ_GO:
                 index = st_move.pop() - 1;
                 break;
-            case POLIZ_FGO:
-                i = st_move.pop() - 1;//т. к. потом index++;
+            case types_lex::POLIZ_FGO:
+                i = st_move.pop() - 1;
                 if (!st_bool.pop())
                     index = i;
                 break;
-            case LEX_WRITE:
-                for (int i = 0; i < FN.get_top(); i++)
-                    if (FN[i].get_poliz_num() == index)
-                        f_index = i;
+            case types_lex::LEX_WRITE:
+                for (int n = 0; n < FN.get_top(); n++)
+                    if (FN[n].get_poliz_num() == index)
+                        f_index = n;
                 k1 = FN[f_index].get_num_int();
                 k2 = FN[f_index].get_num_str();
 
-                for (int i = 0; i < k1; i++)
+                for (int n = 0; n < k1; n++)
                     st_wr_num.push(st_num.pop());
 
-                for (int i = 0; i < k2; i++)
+                for (int n = 0; n < k2; n++)
                     st_wr_str.push(st_str.pop());
 
-                for (int i = 0; i < k1 + k2; i++) {
-                    if (FN[f_index].get_el(i) == LEX_INT)
+                for (int n = 0; n < k1 + k2; n++) {
+                    if (FN[f_index].get_el(n) == types_lex::LEX_INT)
                         cout << st_wr_num.pop() << endl;
                     else
                         cout << st_wr_str.pop() << endl;
                 }
-                f_index++;
                 break;
-            case LEX_READ:
-                for (int i = 0; i < FN.get_top(); i++)
-                    if (FN[i].get_poliz_num() == index)
-                        f_index = i;
+            case types_lex::LEX_READ:
+                for (int n = 0; n < FN.get_top(); n++)
+                    if (FN[n].get_poliz_num() == index)
+                        f_index = n;
                 k1 = FN[f_index].get_num_int();
                 k2 = FN[f_index].get_num_str();
 
-                for (int i = 0; i < k1 + k2; i++)
+                for (int n = 0; n < k1 + k2; n++)
                     st_wr_num.push(st_var.pop());
 
-                for (int i = 0; i < k1 + k2; i++) {
+                for (int n = 0; n < k1 + k2; n++) {
                     j = st_wr_num.pop();
-                    if (FN[f_index].get_el(i) == LEX_INT) {
+                    if (FN[f_index].get_el(n) == types_lex::LEX_INT) {
                         cout << "Input int value for ";
                         cout << TID[j].get_name() << endl;
                         cin >> k;
@@ -1102,35 +1087,41 @@ void Executer::execute(Poliz &prog) {
                     }
                     TID[j].set_assign();
                 }
-                f_index++;
                 break;
-            case LEX_PLUS:
-                if (flag_is_string())
-                    st_str.push(st_str.pop() + st_str.pop());
-                else
-                    st_num.push(st_num.pop() + st_num.pop());
+            case types_lex::LEX_PLUS:
+                if (flag_is_string()) {
+                    str = st_str.pop();
+                    st_str.push(st_str.pop() + str);
+                } else {
+                    i = st_num.pop();
+                    st_num.push(st_num.pop() + i);
+                }
                 break;
-            case LEX_STAR:
-                st_num.push(st_num.pop() * st_num.pop());
+            case types_lex::LEX_STAR:
+                i = st_num.pop();
+                st_num.push(st_num.pop() * i);
                 break;
-            case LEX_MINUS:
+            case types_lex::LEX_MINUS:
                 i = st_num.pop();
                 st_num.push(st_num.pop() - i);
                 break;
-            case LEX_SLASH:
+            case types_lex::LEX_SLASH:
                 i = st_num.pop();
-                if (!i)
+                if (i)
                     st_num.push(st_num.pop() / i);
                 else
-                    throw "POLIZ:divide by zero";
+                    throw InterpretError("runtime: division by zero");
                 break;
-            case LEX_EQ:
-                if (flag_is_string())
-                    st_bool.push(st_str.pop() == st_str.pop());
-                else
-                    st_bool.push(st_num.pop() == st_num.pop());
+            case types_lex::LEX_EQ:
+                if (flag_is_string()) {
+                    str = st_str.pop();
+                    st_bool.push(st_str.pop() == str);
+                } else {
+                    i = st_num.pop();
+                    st_bool.push(st_num.pop() == i);
+                }
                 break;
-            case LEX_LSS:
+            case types_lex::LEX_LSS:
                 if (flag_is_string()) {
                     str = st_str.pop();
                     st_bool.push(st_str.pop() < str);
@@ -1139,7 +1130,7 @@ void Executer::execute(Poliz &prog) {
                     st_bool.push(st_num.pop() < i);
                 }
                 break;
-            case LEX_GRT:
+            case types_lex::LEX_GRT:
                 if (flag_is_string()) {
                     str = st_str.pop();
                     st_bool.push(st_str.pop() > str);
@@ -1148,7 +1139,7 @@ void Executer::execute(Poliz &prog) {
                     st_bool.push(st_num.pop() > i);
                 }
                 break;
-            case LEX_LOE:
+            case types_lex::LEX_LOE:
                 if (flag_is_string()) {
                     str = st_str.pop();
                     st_bool.push(st_str.pop() <= str);
@@ -1157,7 +1148,7 @@ void Executer::execute(Poliz &prog) {
                     st_bool.push(st_num.pop() <= i);
                 }
                 break;
-            case LEX_GOE:
+            case types_lex::LEX_GOE:
                 if (flag_is_string()) {
                     str = st_str.pop();
                     st_bool.push(st_str.pop() >= str);
@@ -1166,7 +1157,7 @@ void Executer::execute(Poliz &prog) {
                     st_bool.push(st_num.pop() >= i);
                 }
                 break;
-            case LEX_NEQ:
+            case types_lex::LEX_NEQ:
                 if (flag_is_string()) {
                     str = st_str.pop();
                     st_bool.push(st_str.pop() != str);
@@ -1175,7 +1166,7 @@ void Executer::execute(Poliz &prog) {
                     st_bool.push(st_num.pop() != i);
                 }
                 break;
-            case LEX_ASSIGN:
+            case types_lex::LEX_ASSIGN:
                 j = st_var.pop();
                 if (flag_is_int()) {
                     i = st_num.pop();
@@ -1188,7 +1179,7 @@ void Executer::execute(Poliz &prog) {
                 }
                 TID[j].set_assign();
                 break;
-            case LEX_SEMICOLON:
+            case types_lex::LEX_SEMICOLON:
                 if (flag_is_int())
                     st_num.pop();
                 else
@@ -1196,7 +1187,7 @@ void Executer::execute(Poliz &prog) {
                 rezero_flag();
                 break;
             default:
-                throw "POLIZ: unexpected elem";
+                throw InterpretError("runtime: unexpected poliz element");
         }
         ++index;
     }
@@ -1205,11 +1196,14 @@ void Executer::execute(Poliz &prog) {
 
 /* ------------------------- Interpretator ------------------------- */
 class Interpretator {
+    TableIdent TID;
+    FTable FN;
     Parser pars;
     Executer E;
 
 public:
-    Interpretator(char *program) : pars(program) {};
+    Interpretator(const string &program)
+            : pars(program, TID, FN), E(TID, FN) {}
 
     void interpretation() {
         pars.analyze();
@@ -1222,21 +1216,18 @@ int main(int argc, char **argv) {
         if (argc >= 2) {
             Interpretator I(argv[1]);
             I.interpretation();
-        } else
-            cout << "There is no program\n";
+        } else {
+            cout << "Usage: " << argv[0] << " <program-file>\n";
+            return 1;
+        }
         return 0;
     }
-    catch (types_lex t) {
-        cout << "Error: lex type == " << t << endl;
-    }
-    catch (Lex l) {
-        cout << "Error: lex type == " << l.get_type() << " " << l.get_val() << " " << l.get_str() << endl;
-    }
-    catch (const char *str) {
-        cout << "Error: " << str << endl;
+    catch (const exception &e) {
+        cout << "Error: " << e.what() << endl;
+        return 1;
     }
     catch (...) {
-        cout << "Error with logic" << endl;
+        cout << "Error: unknown failure" << endl;
+        return 1;
     }
-    return 0;
 }
