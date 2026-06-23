@@ -1,251 +1,179 @@
 #include <iostream>
-#include <fstream>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <sstream>
+#include <stdexcept>
+#include <system_error>
+#include <optional>
+#include <cstring>
+#include <cerrno>
 
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <sys/time.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <signal.h>
 
-using namespace std;
+namespace cfg {
+    inline constexpr short        PORT      = 1235;
+    inline constexpr std::size_t  BUFSIZE   = 4096;
+    inline constexpr const char*  BASE_ADDR = "127.0.0.1";
+}
 
-#define PORT 1235
-#define BACKLOG 5
-#define BUFSIZE 4096
-#define BASE_ADDR "127.0.0.1"
+[[noreturn]] static void throw_errno(const std::string& what) {
+    throw std::system_error(errno, std::generic_category(), what);
+}
 
 class SocketAddress {
-    struct sockaddr_in saddr_; // см содержимое структуры
+    sockaddr_in saddr_{};
 public:
-    SocketAddress() {
+    SocketAddress(std::string_view ip, short port) {
         saddr_.sin_family = AF_INET;
-        saddr_.sin_port = htons(PORT);
-        saddr_.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        cout << "empty constr" << endl;
+        saddr_.sin_port   = htons(port);
+        if (::inet_pton(AF_INET, ip.data(), &saddr_.sin_addr) != 1)
+            throw std::invalid_argument("bad IP address");
     }
-
-    SocketAddress(const char *ip, short port) {
-        saddr_.sin_family = AF_INET;
-        saddr_.sin_port = htons(port);
-        saddr_.sin_addr.s_addr = inet_addr(ip);
-    }
-
-    int GetAdrLen() const { return sizeof(saddr_); }
-
-    struct sockaddr *GetAddr() const {
-        return (sockaddr *) &saddr_;
-    }
+    socklen_t       Len()  const { return sizeof(saddr_); }
+    const sockaddr* Addr() const { return reinterpret_cast<const sockaddr*>(&saddr_); }
 };
 
 class Socket {
 protected:
-    int sd_;
-
-    explicit Socket(int sd) : sd_(sd) {}
-
+    int sd_{-1};
 public:
-    Socket() { sd_ = socket(AF_INET, SOCK_STREAM, 0); }
-
-    ~Socket() {
-        close(sd_);
+    Socket() {
+        sd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (sd_ < 0) throw_errno("socket");
     }
-
-    void Shutdown() {
-        shutdown(sd_, SHUT_RDWR);
+    Socket(const Socket&)            = delete;
+    Socket& operator=(const Socket&) = delete;
+    Socket(Socket&& o) noexcept : sd_(o.sd_) { o.sd_ = -1; }
+    Socket& operator=(Socket&& o) noexcept {
+        if (this != &o) { if (sd_ >= 0) ::close(sd_); sd_ = o.sd_; o.sd_ = -1; }
+        return *this;
     }
-
-    int GetSd() const { return sd_; }
+    ~Socket() { if (sd_ >= 0) ::close(sd_); }
+    void Shutdown() noexcept { if (sd_ >= 0) ::shutdown(sd_, SHUT_RDWR); }
+    int  Fd() const noexcept { return sd_; }
 };
 
-class ConnectedSocket : public Socket {
+class ClientSocket : public Socket {
 public:
-    ConnectedSocket() = default;
-
-    explicit ConnectedSocket(int sd) : Socket(sd) {}
-
-    void Write(const string &str) {
-        int send_result = send(sd_, str.c_str(), str.length(), 0);
-        if (send_result < 0) {
-            cerr << "errr with write" << endl;
-            exit(1);
-        }
+    void Connect(const SocketAddress& server) {
+        if (::connect(sd_, server.Addr(), server.Len()) < 0) throw_errno("connect");
     }
 
-    void Read(string &str) {
-        char buf[BUFSIZE];
-        int recv_result = recv(sd_, buf, BUFSIZE, 0);
-        if (recv_result < 0) {
-            cerr << "errr with read" << endl;
-            exit(1);
-        }
-
-        str = buf;
-    }
-};
-
-class ClientSocket : public ConnectedSocket {
-public:
-    void Connect(const SocketAddress &serverAddr) {
-        int connect_result = connect(sd_, serverAddr.GetAddr(), serverAddr.GetAdrLen());
-        if (connect_result < 0) {
-            cerr << "err with connect" << endl;
-            exit(1);
-        }
-    }
-};
-
-class HttpHeader {
-    string name_;
-    string value_;
-
-public:
-    HttpHeader() : name_(" "), value_(" ") {}
-
-    HttpHeader(const string &str, const string &val) : name_(str), value_(val) {}
-
-    HttpHeader(const HttpHeader &copy) {
-        name_ = copy.name_;
-        value_ = copy.value_;
-    }
-
-    string str_uni() const { return name_ + value_; }
-
-    int len() const { return name_.length() + value_.length(); }
-
-    static HttpHeader pars_head(const string &str) {
-        int i = 0;
-        string new_name, new_value;
-
-        if (!str.empty()) {
-            while (str[i] != ' ')
-                new_name += str[i++];
-            new_name += '\0';
-
-            while (i < str.size())
-                new_value += str[i++];
-            new_value += '\0';
-
-            cout << "str = " << str << '\n' << "len(new_name) = " << new_name.length() << " len(new_value) = " <<
-                 new_value.length() << '\n' << "--------------------------" << '\n';
-        } else {
-            new_name = " ";
-            new_value = " ";
-        }
-
-        return HttpHeader(new_name, new_value);
-    }
-};
-
-class HttpRequest {
-    vector<string> lines_;
-
-public:
-    HttpRequest() {
-        lines_ = {"GET cgi-bin/test_inter.txt?name=dim&surname=tsarenov&mail=dim_tsar HTTP/1.1\r\0"};
-    }
-
-    string str_uni() const {
-        string tmp;
-        for (int i = 0; i < lines_.size(); i++)
-            tmp += lines_[i];
-        return tmp;
-    }
-};
-
-class HttpAns {
-    HttpHeader ans_;
-    HttpHeader *other_;
-    string body_;
-    int len_;
-
-public:
-    HttpAns(vector<string> lines) {
-        ans_ = HttpHeader::pars_head(lines[0]);
-        other_ = new HttpHeader[lines.size() - 1];
-        int i;
-
-        for (i = 1; i < lines.size(); i++) {
-            other_[i - 1] = HttpHeader::pars_head(lines[i]);
-            if ((lines[i]).empty()) {
-                body_ = lines[i + 1];
-                break;
+    void Write(std::string_view data) {
+        std::size_t total = 0;
+        while (total < data.size()) {
+            ssize_t n = ::send(sd_, data.data() + total, data.size() - total, MSG_NOSIGNAL);
+            if (n < 0) {
+                if (errno == EINTR) continue;
+                throw_errno("send");
             }
+            total += static_cast<std::size_t>(n);
         }
-        len_ = i;
     }
 
-    ~HttpAns() {
-        delete[] other_;
-        cout << "http_ans destr" << endl;
-    }
-
-    void print() const {
-        cout << "ans_: " << ans_.str_uni() << endl;
-        for (int i = 0; i < len_; i++) {
-            cout << "other[" << i << "] : " << (other_[i]).str_uni() << endl;
-            cout << (other_[i]).len() << '\n' << "----------------" << '\n';
+    std::string ReadAll() {
+        std::string out;
+        char buf[cfg::BUFSIZE];
+        for (;;) {
+            ssize_t n = ::recv(sd_, buf, sizeof(buf), 0);
+            if (n < 0) {
+                if (errno == EINTR) continue;
+                throw_errno("recv");
+            }
+            if (n == 0) break;                  
+            out.append(buf, static_cast<std::size_t>(n));
         }
-        cout << endl;
+        return out;
     }
 };
 
-vector<string> split_lines(const string &str) {
-    vector<string> tmp;
-    string cur_line = "";
+struct HttpHeader {
+    std::string name;
+    std::string value;
 
-    for (char c: str) {
-        if (c == '\n') {
-            tmp.push_back(cur_line);
-            cur_line = "";
-        } else {
-            cur_line += c;
+    static HttpHeader parse(std::string_view line) {
+        auto colon = line.find(':');
+        if (colon == std::string_view::npos)
+            return {std::string(line), ""};
+        std::string n(line.substr(0, colon));
+        std::string v(line.substr(colon + 1));
+        std::size_t start = v.find_first_not_of(' ');
+        if (start != std::string::npos) v = v.substr(start);
+        return {std::move(n), std::move(v)};
+    }
+};
+
+class HttpResponse {
+    std::string              status_;
+    std::vector<HttpHeader>  headers_;
+    std::string              body_;
+public:
+    explicit HttpResponse(std::string_view raw) {
+        auto sep = raw.find("\r\n\r\n");
+        std::string_view head = (sep == std::string_view::npos) ? raw : raw.substr(0, sep);
+        if (sep != std::string_view::npos) body_ = std::string(raw.substr(sep + 4));
+
+        std::istringstream iss{std::string(head)};
+        std::string line;
+        bool first = true;
+        while (std::getline(iss, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (first) { status_ = line; first = false; continue; }
+            if (line.empty()) continue;
+            headers_.push_back(HttpHeader::parse(line));
         }
     }
 
-    if (!cur_line.empty()) {
-        tmp.push_back(cur_line);
+    void Print() const {
+        std::cout << "status : " << status_ << '\n';
+        for (std::size_t i = 0; i < headers_.size(); ++i)
+            std::cout << "header[" << i << "]: " << headers_[i].name
+                      << " = " << headers_[i].value << '\n';
+        if (!body_.empty())
+            std::cout << "body   : " << body_ << '\n';
     }
+};
 
-    return tmp;
+static std::string build_request() {
+    std::ostringstream os;
+    os << "GET /cgi-bin/test_inter.txt?name=dim&surname=tsarenov&mail=dim_tsar HTTP/1.1\r\n"
+       << "Host: " << cfg::BASE_ADDR << "\r\n"
+       << "Connection: close\r\n\r\n";
+    return os.str();
 }
 
-string add_lines(const vector<string> &lines) {
-    string tmp;
-    for (const auto &l: lines) {
-        tmp += l;
-        tmp += '\n';
-    }
-
-    return tmp;
-}
-
-void client_connection() {
+static void run_client() {
     ClientSocket s;
-    SocketAddress saddr(BASE_ADDR, PORT);
-    s.Connect(saddr);
+    SocketAddress addr(cfg::BASE_ADDR, cfg::PORT);
+    s.Connect(addr);
 
-    HttpRequest http_req;
-    string str_req = http_req.str_uni();
-    s.Write(str_req);
-    vector<string> lines;
-    string str_ans, tmp;
+    s.Write(build_request());
+    std::string raw = s.ReadAll();
 
-    for (auto i = 0; i < 3; ++i) {
-        s.Read(str_ans);
-        tmp += str_ans;
-    }
-
-    lines = split_lines(tmp);
-    HttpAns ans(lines);
-    ans.print();
+    HttpResponse resp(raw);
+    resp.Print();
     s.Shutdown();
 }
 
 int main() {
-    client_connection();
-    cout << "client ending...\n";
+    struct sigaction sa{};
+    sa.sa_handler = SIG_IGN;
+    sigaction(SIGPIPE, &sa, nullptr);
+
+    try {
+        run_client();
+    } catch (const std::exception& e) {
+        std::cerr << "client error: " << e.what() << '\n';
+        return 1;
+    } catch (...) {
+        std::cerr << "client error: unknown exception\n";
+        return 1;
+    }
+    std::cout << "client ending...\n";
     return 0;
 }
