@@ -1,207 +1,85 @@
+## Tests
 
-# Posts Service
-
-GraphQL-сервис для постов и комментариев. Поддерживает два режима хранения данных (in-memory и PostgreSQL), real-time подписки и оптимизацию запросов через DataLoader.
-
-## Требования
-
-- Go 1.21+
-- Docker 
--  PostgreSQL
-## Переменные окружения
-
-| Переменная | По умолчанию | Описание |
-|---|---|---|
-| STORAGE | memory | Хранилище: memory или postgres |
-| PORT | 8080 | Порт HTTP-сервера |
-| DATABASE_URL | postgresql://postgres@localhost:5432/postsdb?sslmode=disable | Строка подключения к PostgreSQL |
-| TEST_DB_URL | — | Строка подключения для интеграционных тестов |
-
-## Запуск
-
-In-memory:
-`go run server/*.go`
-
-PostgreSQL:
-`STORAGE=postgres DATABASE_URL="postgresql://postgres:password@localhost:5432/postsdb?sslmode=disable" go run server/*.go`
-
-Docker in-memory:
-`docker compose --profile memory up --build`
-
-Docker PostgreSQL:
-`docker compose --profile postgres up --build`
-
-Остановка Docker:
-`docker compose down`
-
-После запуска GraphQL playground доступен на http://localhost:8080/.
-
-## Примеры запросов
-
-Создать пост:
-```
-mutation {
-  createPost(title: "Привет", content: "Первый пост", author: "Ivan") {
-    id
-    title
-    createdAt
-  }
-}
-```
-
-Получить список постов с комментариями:
-```
-query {
-  posts(first: 10) {
-    edges {
-      node {
-        id
-        title
-        author
-        comments(first: 5) {
-          edges {
-            node {
-              content
-              author
-              replies(first: 3) {
-                edges {
-                  node {
-                    content
-                    author
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    pageInfo {
-      hasNextPage
-      endPosition
-    }
-  }
-}
-```
-
-Создать комментарий:
-```
-mutation {
-  createComment(input: {
-    postId: "your-post-id"
-    author: "Ivan"
-    content: "Отличный пост!"
-  }) {
-    id
-    content
-    createdAt
-  }
-}
-```
-
-Подписка на новые комментарии:
-```
-subscription {
-  commentAdded(postId: "your-post-id") {
-    id
-    author
-    content
-    createdAt
-  }
-}
-```
-Включить/отключить комментарии к посту:
-
-```
-mutation {
-  toggleComments(postId: "your-post-id", allowComments: false) {
-    id
-    allowComments
-  }
-}
-```
-## Тесты
-
-Все тесты:
+All tests:
 go test ./test -v
 
-Тесты с PostgreSQL:
+Tests with PostgreSQL:
 docker compose up -d postgres
 docker exec -it posts-service-postgres psql -U postgres -c "CREATE DATABASE postsdb_test;"
 TEST_DB_URL="postgresql://postgres:password@localhost:5432/postsdb_test?sslmode=disable" go test ./test -v
 
-Покрытие:
+Coverage:
 go test -cover ./...
 
 ---
 
-## Как это работает
+## How It Works
 
-### Как сделать запрос
+### How a request is processed
 
-    1. HTTP запрос приходит на `/query`
-    2. gqlgen парсит GraphQL операцию
-    3. Middleware кладет DataLoader в контекст
-    4. Резолвер достает DataLoader из контекста
-    5. Резолвер вызывает метод хранилища (через DataLoader или напрямую)
-    6. Хранилище возвращает данные
+    1. An HTTP request arrives at `/query`
+    2. gqlgen parses the GraphQL operation
+    3. Middleware places the DataLoader into the context
+    4. The resolver retrieves the DataLoader from the context
+    5. The resolver calls a storage method (via the DataLoader or directly)
+    6. The storage returns the data
 
-**Выбор хранилища** - при старте читается `STORAGE` (memory или postgres). Оба хранилища реализуют одинаковые интерфейсы, поэтому резолверы не знают, с каким работают.
+**Storage selection** — at startup, `STORAGE` is read (memory or postgres). Both backends implement the same interfaces, so resolvers don't know which one they're working with.
 
-### DataLoader и проблема N+1
-Без DataLoader: запросили 10 постов - сделали 1 запрос. Для каждого поста нужно подгрузить комментарии - ещё 10 запросов. Итого 11 запросов.
+### DataLoader and the N+1 problem
 
-С DataLoader: DataLoader копит ID постов в течение 2мс, потом делает один запрос за комментариями ко всем постам сразу. Итого 2 запроса.
+Without DataLoader: you request 10 posts — that's 1 query. For each post you need to load its comments — that's 10 more queries. 11 queries total.
 
-Реализация: два лоадера в dataloader/dataloader.go:
+With DataLoader: the DataLoader accumulates post IDs over 2ms, then makes a single query for the comments of all posts at once. 2 queries total.
 
-CommentsByPostID - собирает ID постов
+Implementation: two loaders in dataloader/dataloader.go:
 
-RepliesByParentID - собирает ID комментариев для загрузки ответов
+CommentsByPostID — collects post IDs
 
-Оба ждут 2мс, собирают ID и делают один запрос к БД через методы GetCommentsByPostIDs и GetRepliesByParentIDs.
+RepliesByParentID — collects comment IDs to load replies
 
-### Подписки
+Both wait 2ms, gather the IDs, and make a single query to the database via the methods GetCommentsByPostIDs and GetRepliesByParentIDs.
 
-commentAdded - уведомление о новом комментарии к посту. Реализовано по-разному в двух хранилищах:
-In-memory: при вызове Subscribe создаётся канал, который кладётся в map[postID][]chan. Когда создаётся комментарий, он рассылается по всем каналам этого поста. 
+### Subscriptions
 
-использует LISTEN/NOTIFY. При создании комментария отправляется событие в канал post_{postID}. Отдельное соединение слушает события и отправляет их клиентам.
+commentAdded — a notification about a new comment on a post. Implemented differently in the two backends:
 
+In-memory: when Subscribe is called, a channel is created and placed into a map[postID][]chan. When a comment is created, it is broadcast to all channels for that post.
+
+PostgreSQL: uses LISTEN/NOTIFY. When a comment is created, an event is sent to the channel post_{postID}. A separate connection listens for events and forwards them to clients.
 
 ---
 
-## Обзор файлов
+## File Overview
 
-### Точка входа
+### Entry point
 
-`server/main.go` - точка входа, вызывает run().
+`server/main.go` — entry point, calls run().
 
-`server/app.go` - читает STORAGE, инициализирует хранилище, создаёт resolver, настраивает GraphQL-сервер с DataLoader middleware, запускает HTTP-сервер.
+`server/app.go` — reads STORAGE, initializes the storage backend, creates the resolver, configures the GraphQL server with DataLoader middleware, and starts the HTTP server.
 
 ### GraphQL
 
-`internal/graph/schema.graphqls` - GraphQL-схема. Определяет типы (Post, Comment, PostConnection, CommentEdge и др.), запросы (posts, post), мутации (createPost, createComment, toggleComments) и подписку (commentAdded).
+`internal/graph/schema.graphqls` — the GraphQL schema. Defines types (Post, Comment, PostConnection, CommentEdge, etc.), queries (posts, post), mutations (createPost, createComment, toggleComments), and a subscription (commentAdded).
 
-`internal/graph/schema.resolvers.go` - реализация GraphQL-операций:
-- createPost, posts, post -  для постов
-- createComment, Comments, Replies - работа с комментариями, используют DataLoader
-- commentAdded - подписка на новые комментарии через WebSocket
-- toggleComments - включение/отключение комментариев у поста
+`internal/graph/schema.resolvers.go` — implementation of the GraphQL operations:
+- createPost, posts, post — for posts
+- createComment, Comments, Replies — handling comments, using DataLoader
+- commentAdded — subscription to new comments via WebSocket
+- toggleComments — enabling/disabling comments on a post
 
-`internal/graph/resolver.go` - структура Resolver, хранит зависимости (репозитории, лоадеры).
+`internal/graph/resolver.go` — the Resolver struct, holds dependencies (repositories, loaders).
 
-### Хранилища
+### Storage backends
 
-`internal/repository/repository.go` - интерфейсы PostRepository и CommentRepository, позволяют иметь общий интерфейс для in-memory и PostgreSQL.
+`internal/repository/repository.go` — the PostRepository and CommentRepository interfaces, providing a common interface for in-memory and PostgreSQL.
 
-`internal/repository/memory.go` - in-memory реализация. Хранит данные в виде структуры из map с возможностью блокировки Подписки реализуются через каналы.
+`internal/repository/memory.go` — in-memory implementation. Stores data as a struct of maps with locking support. Subscriptions are implemented via channels.
 
-`internal/repository/postgres.go` - PostgreSQL-реализация через pgxpool.
+`internal/repository/postgres.go` — PostgreSQL implementation via pgxpool.
 
 ### DataLoader
 
-`dataloader/dataloader.go` - два лоадера для сощдания батчей запросов к БД: CommentsByPostID и RepliesByParentID.
+`dataloader/dataloader.go` — two loaders for batching database queries: CommentsByPostID and RepliesByParentID.
 
-`dataloader/context.go` - WithLoaders / GetLoaders для передачи лоадеров через context.Context.
-
+`dataloader/context.go` — WithLoaders / GetLoaders for passing loaders through context.Context.
