@@ -9,13 +9,14 @@ import (
 
 	"posts-service/internal/model"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 type PostgresStore struct {
 	pool       *pgxpool.Pool
-	connString string 
+	connString string
 }
 
 func NewPostgresStore(connString string) (*PostgresStore, error) {
@@ -61,6 +62,9 @@ func (s *PostgresStore) CreatePost(ctx context.Context, post *model.Post) error 
 }
 
 func (s *PostgresStore) GetPostByID(ctx context.Context, id string) (*model.Post, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, &ErrPostNotFound{PostID: id}
+	}
 	const q = `SELECT id, title, content, author, allow_comments, created_at FROM posts WHERE id = $1`
 
 	var p model.Post
@@ -143,6 +147,9 @@ func (s *PostgresStore) GetPosts(ctx context.Context, first int, after *string) 
 }
 
 func (s *PostgresStore) ToggleComments(ctx context.Context, postID string, allowComments bool) (*model.Post, error) {
+	if _, err := uuid.Parse(postID); err != nil {
+		return nil, &ErrPostNotFound{PostID: postID}
+	}
 	const q = `
 		UPDATE posts SET allow_comments = $1 WHERE id = $2
 		RETURNING id, title, content, author, allow_comments, created_at`
@@ -160,6 +167,9 @@ func (s *PostgresStore) ToggleComments(ctx context.Context, postID string, allow
 }
 
 func (s *PostgresStore) CreateComment(ctx context.Context, comment *model.Comment) (*model.Comment, error) {
+	if _, err := uuid.Parse(comment.PostID); err != nil {
+		return nil, &ErrPostNotFound{PostID: comment.PostID}
+	}
 	if len(comment.Content) > 2000 {
 		return nil, &ErrCommentTooLong{MaxLength: 2000}
 	}
@@ -226,84 +236,22 @@ func (s *PostgresStore) notify(comment *model.Comment) {
 	defer conn.Release()
 
 	safePayload := string(payload)
-	_, _ = conn.Exec(ctx, fmt.Sprintf("SELECT pg_notify('%s', $1)", channelName), safePayload)
+	_, _ = conn.Exec(ctx, "SELECT pg_notify($1, $2)", channelName, safePayload)
 }
 
 func (s *PostgresStore) GetCommentsByPostID(ctx context.Context, postID string, first int, after *string) (*model.CommentConnection, error) {
-	if first <= 0 {
-		first = 10
-	}
-
-	var totalCount int
-	s.pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM comments WHERE post_id = $1 AND parent_id IS NULL", postID,
-	).Scan(&totalCount)
-
-	var rows pgx.Rows
-	var err error
-
-	if after == nil || *after == "" {
-		rows, err = s.pool.Query(ctx,
-			`SELECT id, post_id, parent_id, author, content, created_at
-			 FROM comments
-			 WHERE post_id = $1 AND parent_id IS NULL
-			 ORDER BY created_at DESC, id DESC LIMIT $2`,
-			postID, first+1)
-	} else {
-		rows, err = s.pool.Query(ctx,
-			`SELECT id, post_id, parent_id, author, content, created_at
-			 FROM comments
-			 WHERE post_id = $1 AND parent_id IS NULL
-			   AND (created_at, id) < (
-			       SELECT created_at, id FROM comments WHERE id = $2
-			   )
-			 ORDER BY created_at DESC, id DESC LIMIT $3`,
-			postID, *after, first+1)
-	}
+	pages, err := s.GetCommentPages(ctx, []CommentPage{NewCommentPage(postID, first, after)})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get comments: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-
-	return s.scanCommentConnection(rows, first, totalCount)
+	return pages[0], nil
 }
-
 func (s *PostgresStore) GetRepliesByParentID(ctx context.Context, parentID string, first int, after *string) (*model.CommentConnection, error) {
-	if first <= 0 {
-		first = 10
-	}
-
-	var totalCount int
-	s.pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM comments WHERE parent_id = $1", parentID,
-	).Scan(&totalCount)
-
-	var rows pgx.Rows
-	var err error
-
-	if after == nil || *after == "" {
-		rows, err = s.pool.Query(ctx,
-			`SELECT id, post_id, parent_id, author, content, created_at
-			 FROM comments WHERE parent_id = $1
-			 ORDER BY created_at ASC, id ASC LIMIT $2`,
-			parentID, first+1)
-	} else {
-		rows, err = s.pool.Query(ctx,
-			`SELECT id, post_id, parent_id, author, content, created_at
-			 FROM comments
-			 WHERE parent_id = $1
-			   AND (created_at, id) > (
-			       SELECT created_at, id FROM comments WHERE id = $2
-			   )
-			 ORDER BY created_at ASC, id ASC LIMIT $3`,
-			parentID, *after, first+1)
-	}
+	pages, err := s.GetReplyPages(ctx, []CommentPage{NewCommentPage(parentID, first, after)})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get replies: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-
-	return s.scanCommentConnection(rows, first, totalCount)
+	return pages[0], nil
 }
 
 func (s *PostgresStore) Subscribe(ctx context.Context, postID string) (<-chan *model.Comment, error) {
@@ -315,7 +263,7 @@ func (s *PostgresStore) Subscribe(ctx context.Context, postID string) (<-chan *m
 	}
 
 	channelName := "post_" + postID
-	if _, err := conn.Exec(ctx, "LISTEN "+channelName); err != nil {
+	if _, err := conn.Exec(ctx, "LISTEN "+pgx.Identifier{channelName}.Sanitize()); err != nil {
 		conn.Close(ctx)
 		return nil, fmt.Errorf("failed to LISTEN: %w", err)
 	}
@@ -344,122 +292,4 @@ func (s *PostgresStore) Subscribe(ctx context.Context, postID string) (<-chan *m
 	}()
 
 	return ch, nil
-}
-
-
-func (s *PostgresStore) scanCommentConnection(rows pgx.Rows, first, totalCount int) (*model.CommentConnection, error) {
-	var comments []*model.Comment
-	for rows.Next() {
-		c := &model.Comment{}
-		if err := rows.Scan(&c.ID, &c.PostID, &c.ParentID, &c.Author, &c.Content, &c.CreatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan comment: %w", err)
-		}
-		comments = append(comments, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows error: %w", err)
-	}
-
-	hasNextPage := len(comments) > first
-	if hasNextPage {
-		comments = comments[:first]
-	}
-
-	edges := make([]*model.CommentEdge, len(comments))
-	for i, c := range comments {
-		edges[i] = &model.CommentEdge{Node: c, Position: c.ID}
-	}
-
-	var endPosition *string
-	if len(edges) > 0 {
-		endPosition = &edges[len(edges)-1].Position
-	}
-
-	return &model.CommentConnection{
-		Edges:      edges,
-		PageInfo:   &model.PageInfo{HasNextPage: hasNextPage, EndPosition: endPosition},
-		TotalCount: totalCount,
-	}, nil
-}
-
-func (s *PostgresStore) GetCommentsByPostIDs(ctx context.Context, postIDs []string) (map[string][]*model.Comment, error) {
-	if len(postIDs) == 0 {
-		return make(map[string][]*model.Comment), nil
-	}
-
-	const q = `
-		SELECT id, post_id, parent_id, author, content, created_at
-		FROM comments
-		WHERE post_id = ANY($1) AND parent_id IS NULL
-		ORDER BY created_at DESC, id DESC`
-
-	rows, err := s.pool.Query(ctx, q, postIDs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get comments by post ids: %w", err)
-	}
-	defer rows.Close()
-
-	result := make(map[string][]*model.Comment)
-	for _, postID := range postIDs {
-		result[postID] = []*model.Comment{}
-	}
-
-	for rows.Next() {
-		c := &model.Comment{}
-		var parentID *string
-		err := rows.Scan(&c.ID, &c.PostID, &parentID, &c.Author, &c.Content, &c.CreatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan comment: %w", err)
-		}
-		c.ParentID = parentID
-		result[c.PostID] = append(result[c.PostID], c)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows error: %w", err)
-	}
-
-	return result, nil
-}
-
-func (s *PostgresStore) GetRepliesByParentIDs(ctx context.Context, parentIDs []string) (map[string][]*model.Comment, error) {
-	if len(parentIDs) == 0 {
-		return make(map[string][]*model.Comment), nil
-	}
-
-	const q = `
-		SELECT id, post_id, parent_id, author, content, created_at
-		FROM comments
-		WHERE parent_id = ANY($1)
-		ORDER BY created_at ASC, id ASC`
-
-	rows, err := s.pool.Query(ctx, q, parentIDs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get replies by parent ids: %w", err)
-	}
-	defer rows.Close()
-
-	result := make(map[string][]*model.Comment)
-	for _, parentID := range parentIDs {
-		result[parentID] = []*model.Comment{}
-	}
-
-	for rows.Next() {
-		c := &model.Comment{}
-		var parentID *string
-		err := rows.Scan(&c.ID, &c.PostID, &parentID, &c.Author, &c.Content, &c.CreatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan comment: %w", err)
-		}
-		c.ParentID = parentID
-		if c.ParentID != nil {
-			result[*c.ParentID] = append(result[*c.ParentID], c)
-		}
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows error: %w", err)
-	}
-
-	return result, nil
 }

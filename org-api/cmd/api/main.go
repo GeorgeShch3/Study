@@ -10,11 +10,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GeorgeShch3/Study/org-api/config"
+	"github.com/GeorgeShch3/Study/org-api/internal/handler"
+	"github.com/GeorgeShch3/Study/org-api/internal/repository"
+	"github.com/GeorgeShch3/Study/org-api/internal/service"
 	"github.com/pressly/goose/v3"
-	"github.com/yourname/org-api/config"
-	"github.com/yourname/org-api/internal/handler"
-	"github.com/yourname/org-api/internal/repository"
-	"github.com/yourname/org-api/internal/service"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )

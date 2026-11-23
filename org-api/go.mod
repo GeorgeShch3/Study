@@ -1,4 +1,4 @@
-module github.com/yourname/org-api
+module github.com/GeorgeShch3/Study/org-api
 
 go 1.23
 

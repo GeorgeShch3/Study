@@ -17,6 +17,6 @@ type CommentRepository interface {
 	GetCommentsByPostID(ctx context.Context, postID string, first int, after *string) (*model.CommentConnection, error)
 	GetRepliesByParentID(ctx context.Context, parentID string, first int, after *string) (*model.CommentConnection, error)
 	Subscribe(ctx context.Context, postID string) (<-chan *model.Comment, error)
-	GetCommentsByPostIDs(ctx context.Context, postIDs []string) (map[string][]*model.Comment, error)
-	GetRepliesByParentIDs(ctx context.Context, parentIDs []string) (map[string][]*model.Comment, error)
+	GetCommentPages(ctx context.Context, pages []CommentPage) ([]*model.CommentConnection, error)
+	GetReplyPages(ctx context.Context, pages []CommentPage) ([]*model.CommentConnection, error)
 }

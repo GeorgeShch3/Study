@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 	"posts-service/internal/model"
-	"sort"
+
 	"strconv"
 	"sync"
 	"time"
@@ -35,9 +35,9 @@ type MemoryStore struct {
 	mu          sync.RWMutex
 	posts       map[string]*model.Post
 	comments    map[string]*model.Comment
-	postOrder   []string            
-	postRoots   map[string][]string 
-	byParent    map[string][]string 
+	postOrder   []string
+	postRoots   map[string][]string
+	byParent    map[string][]string
 	subscribers map[string][]chan *model.Comment
 }
 
@@ -205,7 +205,7 @@ func (s *MemoryStore) CreateComment(ctx context.Context, comment *model.Comment)
 	for _, ch := range subs {
 		select {
 		case ch <- &result:
-		default: 
+		default:
 		}
 	}
 
@@ -214,73 +214,18 @@ func (s *MemoryStore) CreateComment(ctx context.Context, comment *model.Comment)
 }
 
 func (s *MemoryStore) GetCommentsByPostID(ctx context.Context, postID string, first int, after *string) (*model.CommentConnection, error) {
-	if err := checkContext(ctx); err != nil {
+	pages, err := s.GetCommentPages(ctx, []CommentPage{NewCommentPage(postID, first, after)})
+	if err != nil {
 		return nil, err
 	}
-	if first <= 0 {
-		first = 10
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	rootIDs := s.postRoots[postID]
-	if len(rootIDs) == 0 {
-		return emptyCommentConnection(), nil
-	}
-
-	reversed := reverseStrings(rootIDs)
-	return s.paginateCommentIDs(reversed, first, after)
+	return pages[0], nil
 }
-
 func (s *MemoryStore) GetRepliesByParentID(ctx context.Context, parentID string, first int, after *string) (*model.CommentConnection, error) {
-	if err := checkContext(ctx); err != nil {
+	pages, err := s.GetReplyPages(ctx, []CommentPage{NewCommentPage(parentID, first, after)})
+	if err != nil {
 		return nil, err
 	}
-	if first <= 0 {
-		first = 10
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	replyIDs := s.byParent[parentID]
-	if len(replyIDs) == 0 {
-		return emptyCommentConnection(), nil
-	}
-
-	return s.paginateCommentIDs(replyIDs, first, after)
-}
-
-func (s *MemoryStore) GetCommentsByPostIDs(ctx context.Context, postIDs []string) (map[string][]*model.Comment, error) {
-	if err := checkContext(ctx); err != nil {
-		return nil, err
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	result := make(map[string][]*model.Comment)
-
-	for _, postID := range postIDs {
-		rootIDs := s.postRoots[postID]
-		comments := make([]*model.Comment, 0, len(rootIDs))
-
-		for _, commentID := range rootIDs {
-			if c, ok := s.comments[commentID]; ok {
-				clone := *c
-				comments = append(comments, &clone)
-			}
-		}
-
-		sort.Slice(comments, func(i, j int) bool {
-			return comments[i].CreatedAt.After(comments[j].CreatedAt)
-		})
-
-		result[postID] = comments
-	}
-
-	return result, nil
+	return pages[0], nil
 }
 
 func (s *MemoryStore) Subscribe(ctx context.Context, postID string) (<-chan *model.Comment, error) {
@@ -344,6 +289,7 @@ func (s *MemoryStore) paginateCommentIDs(
 
 	start := 0
 	if after != nil && *after != "" {
+		start = len(ids)
 		for i, id := range ids {
 			if id == *after {
 				start = i + 1
@@ -379,37 +325,6 @@ func (s *MemoryStore) paginateCommentIDs(
 	}, nil
 }
 
-func (s *MemoryStore) GetRepliesByParentIDs(ctx context.Context, parentIDs []string) (map[string][]*model.Comment, error) {
-	if err := checkContext(ctx); err != nil {
-		return nil, err
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	result := make(map[string][]*model.Comment)
-
-	for _, parentID := range parentIDs {
-		replyIDs := s.byParent[parentID]
-		replies := make([]*model.Comment, 0, len(replyIDs))
-
-		for _, replyID := range replyIDs {
-			if c, ok := s.comments[replyID]; ok {
-				clone := *c
-				replies = append(replies, &clone)
-			}
-		}
-
-		sort.Slice(replies, func(i, j int) bool {
-			return replies[i].CreatedAt.Before(replies[j].CreatedAt)
-		})
-
-		result[parentID] = replies
-	}
-
-	return result, nil
-}
-
 func (s *MemoryStore) Close() error {
-    return nil
+	return nil
 }

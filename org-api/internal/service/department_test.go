@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GeorgeShch3/Study/org-api/internal/apierr"
+	"github.com/GeorgeShch3/Study/org-api/internal/dto"
+	"github.com/GeorgeShch3/Study/org-api/internal/model"
+	"github.com/GeorgeShch3/Study/org-api/internal/repository"
+	"github.com/GeorgeShch3/Study/org-api/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yourname/org-api/internal/apierr"
-	"github.com/yourname/org-api/internal/dto"
-	"github.com/yourname/org-api/internal/model"
-	"github.com/yourname/org-api/internal/repository"
-	"github.com/yourname/org-api/internal/service"
 	"gorm.io/gorm"
 )
 

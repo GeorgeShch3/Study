@@ -1,12 +1,20 @@
 # Geo KNN Search (VP-Tree)
 
-A Go programm that finds the *k* nearest geographic points to a query coordinate
+A Go program that finds the *k* nearest geographic points to a query coordinate
 using a **Vantage-Point Tree** and **Haversine** distance.
 
 ## Usage
 
+Run from `test tasks/first` in the cloned repository. Requires Go; no database or external packages are needed. A small sample file is included:
+
 ```bash
-go run task1.go coordinates.csv
+go run task2.go coordinates.example.csv
+```
+
+For your own data:
+
+```bash
+go run task2.go coordinates.csv
 ```
 
 The CSV has no header and two columns: `latitude,longitude`. After loading,

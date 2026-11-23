@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/yourname/org-api/internal/dto"
-	"github.com/yourname/org-api/internal/service"
+	"github.com/GeorgeShch3/Study/org-api/internal/dto"
+	"github.com/GeorgeShch3/Study/org-api/internal/service"
 )
 
 type EmployeeHandler struct {

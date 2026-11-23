@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/yourname/org-api/internal/model"
+	"github.com/GeorgeShch3/Study/org-api/internal/model"
 	"gorm.io/gorm"
 )
 

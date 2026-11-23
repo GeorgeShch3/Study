@@ -6,10 +6,10 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/yourname/org-api/internal/apierr"
-	"github.com/yourname/org-api/internal/dto"
-	"github.com/yourname/org-api/internal/model"
-	"github.com/yourname/org-api/internal/repository"
+	"github.com/GeorgeShch3/Study/org-api/internal/apierr"
+	"github.com/GeorgeShch3/Study/org-api/internal/dto"
+	"github.com/GeorgeShch3/Study/org-api/internal/model"
+	"github.com/GeorgeShch3/Study/org-api/internal/repository"
 	"gorm.io/gorm"
 )
 
@@ -124,7 +124,7 @@ func (s *departmentService) Update(ctx context.Context, id uint, req *dto.Update
 		}
 
 		if req.ParentIDSet {
-			newParentID := req.ParentID 
+			newParentID := req.ParentID
 
 			if newParentID != nil && *newParentID == id {
 				return &apierr.ConflictError{Message: "department cannot be its own parent"}

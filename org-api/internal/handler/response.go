@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/yourname/org-api/internal/apierr"
+	"github.com/GeorgeShch3/Study/org-api/internal/apierr"
 )
 
 type errorResponse struct {

@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"posts-service/dataloader"
-	"posts-service/internal/graph"
 	"posts-service/internal/model"
 	"posts-service/internal/repository"
 
@@ -427,7 +425,7 @@ func TestGetCommentsByPostID_OnlyRootComments(t *testing.T) {
 	s := newStore()
 	p := mustCreatePost(t, s, "T", "C", "A")
 	root1 := mustCreateComment(t, s, p.ID, nil, "A", "Root1")
-	mustCreateComment(t, s, p.ID, &root1.ID, "B", "Reply") 
+	mustCreateComment(t, s, p.ID, &root1.ID, "B", "Reply")
 
 	conn, err := s.GetCommentsByPostID(context.Background(), p.ID, 10, nil)
 	if err != nil {
@@ -795,74 +793,4 @@ func asErr[T error](err error, target *T) bool {
 		*target = v
 	}
 	return ok
-}
-
-func TestNoNPlusOneForReplies(t *testing.T) {
-	if isPostgres {
-		t.Skip("graph.NewResolver принимает конкретный тип; для postgres тестируй через HTTP")
-	}
-
-	s := repository.NewMemoryStore()
-
-	post := mustCreatePost(t, s, "Title", "Content", "Author")
-
-	roots := make([]*model.Comment, 10)
-	for i := 0; i < 10; i++ {
-		roots[i] = mustCreateComment(t, s, post.ID, nil, "Author", "Root")
-	}
-
-	for _, root := range roots {
-		for j := 0; j < 5; j++ {
-			mustCreateComment(t, s, post.ID, &root.ID, "ReplyAuthor", "Reply")
-		}
-	}
-
-	resolver := graph.NewResolver(s, s)
-
-	ctx := context.Background()
-	ctx = resolver.DataLoaderMiddleware(ctx)
-	loaders := dataloader.GetLoaders(ctx)
-	rootComments, _ := loaders.CommentsByPostID.Load(ctx, post.ID)
-	for _, root := range rootComments {
-		loaders.RepliesByParentID.Load(ctx, root.ID)
-	}
-
-	start := time.Now()
-
-	for i := 0; i < 100; i++ {
-		rootComments, _ = loaders.CommentsByPostID.Load(ctx, post.ID)
-		for _, root := range rootComments {
-			loaders.RepliesByParentID.Load(ctx, root.ID)
-		}
-	}
-
-	withDataLoader := time.Since(start) / 100
-
-	for i := 0; i < 10; i++ {
-		rootComments2, _ := s.GetCommentsByPostID(context.Background(), post.ID, 10, nil)
-		for _, edge := range rootComments2.Edges {
-			s.GetRepliesByParentID(context.Background(), edge.Node.ID, 10, nil)
-		}
-	}
-
-	start = time.Now()
-
-	for i := 0; i < 100; i++ {
-		rootComments2, _ := s.GetCommentsByPostID(context.Background(), post.ID, 10, nil)
-		for _, edge := range rootComments2.Edges {
-			s.GetRepliesByParentID(context.Background(), edge.Node.ID, 10, nil)
-		}
-	}
-
-	withoutDataLoader := time.Since(start) / 100
-
-	t.Logf("With DataLoader (batched replies): %v", withDataLoader)
-	t.Logf("Without DataLoader (N+1 replies): %v", withoutDataLoader)
-	t.Logf("Speedup: %.2fx", float64(withoutDataLoader)/float64(withDataLoader))
-
-	if withDataLoader >= withoutDataLoader {
-		t.Logf("DataLoader is not faster in this test, but check benchmark for accurate results")
-	} else {
-		t.Log("N+1 problem for replies solved!")
-	}
 }

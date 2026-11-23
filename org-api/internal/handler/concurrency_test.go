@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GeorgeShch3/Study/org-api/internal/apierr"
+	"github.com/GeorgeShch3/Study/org-api/internal/dto"
+	"github.com/GeorgeShch3/Study/org-api/internal/handler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yourname/org-api/internal/apierr"
-	"github.com/yourname/org-api/internal/dto"
-	"github.com/yourname/org-api/internal/handler"
 )
 
 func newFullServer(svc *mockDepartmentService) *httptest.Server {
@@ -167,7 +167,7 @@ func TestConcurrent_PanicRecovery(t *testing.T) {
 		},
 	}
 
-	server := newFullServer(svc) 
+	server := newFullServer(svc)
 	defer server.Close()
 
 	const total = 25
@@ -196,7 +196,7 @@ func TestConcurrent_PanicRecovery(t *testing.T) {
 		case http.StatusOK:
 			ok++
 		case http.StatusInternalServerError:
-			recovered++ 
+			recovered++
 		}
 	}
 

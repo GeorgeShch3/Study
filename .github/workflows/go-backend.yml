@@ -1,0 +1,65 @@
+name: Go Backend CI
+on:
+  push:
+    paths:
+      - 'posts-service/**'
+      - 'org-api/**'
+      - 'test tasks/first/**'
+      - '.github/workflows/go-backend.yml'
+  pull_request:
+    paths:
+      - 'posts-service/**'
+      - 'org-api/**'
+      - 'test tasks/first/**'
+      - '.github/workflows/go-backend.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: [posts-service, org-api]
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: postsdb_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postsdb_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: ${{ matrix.project }}/go.sum
+      - run: go test -race -count=1 ./...
+      - run: go vet ./...
+      - name: Apply Posts Service test migrations
+        if: matrix.project == 'posts-service'
+        env:
+          TEST_DB_URL: postgresql://postgres:password@localhost:5432/postsdb_test?sslmode=disable
+        run: |
+          for migration in migrations/*.sql; do
+            psql "$TEST_DB_URL" -v ON_ERROR_STOP=1 -f "$migration"
+          done
+      - name: Test Posts Service on PostgreSQL
+        if: matrix.project == 'posts-service'
+        env:
+          TEST_DB_URL: postgresql://postgres:password@localhost:5432/postsdb_test?sslmode=disable
+        run: go test -race -count=1 ./...
+      - name: Check Geo KNN example
+        if: matrix.project == 'org-api'
+        working-directory: test tasks/first
+        run: printf '55.7558 37.6173\nq\n' | go run task2.go coordinates.example.csv

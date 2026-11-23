@@ -302,7 +302,7 @@ func run(tree *VPTree) {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Для запуска необходим файл .csv, пример:\ngo run task1.go coordinates.csv")
+		fmt.Println("Для запуска необходим файл .csv, пример:\ngo run task2.go coordinates.csv")
 		os.Exit(1)
 	}
 

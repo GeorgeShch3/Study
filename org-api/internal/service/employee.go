@@ -5,10 +5,10 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/yourname/org-api/internal/apierr"
-	"github.com/yourname/org-api/internal/dto"
-	"github.com/yourname/org-api/internal/model"
-	"github.com/yourname/org-api/internal/repository"
+	"github.com/GeorgeShch3/Study/org-api/internal/apierr"
+	"github.com/GeorgeShch3/Study/org-api/internal/dto"
+	"github.com/GeorgeShch3/Study/org-api/internal/model"
+	"github.com/GeorgeShch3/Study/org-api/internal/repository"
 	"gorm.io/gorm"
 )
 

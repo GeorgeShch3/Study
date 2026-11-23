@@ -9,13 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GeorgeShch3/Study/org-api/internal/apierr"
+	"github.com/GeorgeShch3/Study/org-api/internal/dto"
+	"github.com/GeorgeShch3/Study/org-api/internal/handler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yourname/org-api/internal/apierr"
-	"github.com/yourname/org-api/internal/dto"
-	"github.com/yourname/org-api/internal/handler"
 )
-
 
 type mockDepartmentService struct {
 	createFn func(ctx context.Context, req *dto.CreateDepartmentRequest) (*dto.DepartmentResponse, error)
@@ -37,7 +36,6 @@ func (m *mockDepartmentService) Delete(ctx context.Context, id uint, mode string
 	return m.deleteFn(ctx, id, mode, reassignTo)
 }
 
-
 func newTestRouter(svc *mockDepartmentService) http.Handler {
 	deptH := handler.NewDepartmentHandler(svc)
 	empH := handler.NewEmployeeHandler(&mockEmployeeService{})
@@ -45,7 +43,6 @@ func newTestRouter(svc *mockDepartmentService) http.Handler {
 }
 
 func ptr[T any](v T) *T { return &v }
-
 
 func TestCreateDepartment_Success(t *testing.T) {
 	now := time.Now()
@@ -120,7 +117,6 @@ func TestCreateDepartment_ConflictError(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
-
 
 func TestGetDepartment_Success(t *testing.T) {
 	now := time.Now()
@@ -214,7 +210,6 @@ func TestDeleteDepartment_Reassign(t *testing.T) {
 
 	assert.Equal(t, http.StatusNoContent, w.Code)
 }
-
 
 func TestUpdateDepartment_SetParentToNull(t *testing.T) {
 	svc := &mockDepartmentService{

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/yourname/org-api/internal/dto"
-	"github.com/yourname/org-api/internal/service"
+	"github.com/GeorgeShch3/Study/org-api/internal/dto"
+	"github.com/GeorgeShch3/Study/org-api/internal/service"
 )
 
 type DepartmentHandler struct {

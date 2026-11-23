@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 
-	"posts-service/dataloader"  
+	"posts-service/dataloader"
 	"posts-service/internal/model"
 	"posts-service/internal/repository"
 )
@@ -87,87 +87,36 @@ func (r *mutationResolver) ToggleComments(ctx context.Context, postID string, al
 	return post, nil
 }
 
-// Comments is the resolver for the comments field.
-func paginateComments(comments []*model.Comment, first *int, after *string) *model.CommentConnection {
-	limit := 10
-	if first != nil && *first > 0 {
-		limit = *first
-	}
-
-	start := 0
-	if after != nil && *after != "" {
-		for i, c := range comments {
-			if c.ID == *after {
-				start = i + 1
-				break
-			}
-		}
-	}
-
-	end := start + limit
-	if end > len(comments) {
-		end = len(comments)
-	}
-
-	pageComments := comments[start:end]
-	edges := make([]*model.CommentEdge, len(pageComments))
-	for i, c := range pageComments {
-		edges[i] = &model.CommentEdge{Node: c, Position: c.ID}
-	}
-
-	hasNextPage := end < len(comments)
-	var endPosition *string
-	if len(edges) > 0 {
-		endPosition = &edges[len(edges)-1].Position
-	}
-
-	return &model.CommentConnection{
-		Edges:      edges,
-		PageInfo:   &model.PageInfo{HasNextPage: hasNextPage, EndPosition: endPosition},
-		TotalCount: len(comments),
-	}
-}
-
 func (r *postResolver) Comments(ctx context.Context, obj *model.Post, first *int, after *string) (*model.CommentConnection, error) {
-	loaders := dataloader.GetLoaders(ctx)
-	if loaders != nil {
-		comments, err := loaders.CommentsByPostID.Load(ctx, obj.ID)
-		if err != nil {
-			return nil, fmt.Errorf("get comments: %w", err)
-		}
-		return paginateComments(comments, first, after), nil
-	}
-
-	limit := 10
-	if first != nil && *first > 0 {
-		limit = *first
-	}
-	conn, err := r.CommentRepo.GetCommentsByPostID(ctx, obj.ID, limit, after)
+	limit, err := pageSize(first)
 	if err != nil {
-		return nil, fmt.Errorf("get comments: %w", err)
+		return nil, err
 	}
-	return conn, nil
+	if loaders := dataloader.GetLoaders(ctx); loaders != nil {
+		return loaders.CommentsByPostID.Load(ctx, repository.NewCommentPage(obj.ID, limit, after))
+	}
+	return r.CommentRepo.GetCommentsByPostID(ctx, obj.ID, limit, after)
 }
 
 func (r *commentResolver) Replies(ctx context.Context, obj *model.Comment, first *int, after *string) (*model.CommentConnection, error) {
-	loaders := dataloader.GetLoaders(ctx)
-	if loaders != nil {
-		replies, err := loaders.RepliesByParentID.Load(ctx, obj.ID)
-		if err != nil {
-			return nil, fmt.Errorf("get replies: %w", err)
-		}
-		return paginateComments(replies, first, after), nil
-	}
-
-	limit := 10
-	if first != nil && *first > 0 {
-		limit = *first
-	}
-	conn, err := r.CommentRepo.GetRepliesByParentID(ctx, obj.ID, limit, after)
+	limit, err := pageSize(first)
 	if err != nil {
-		return nil, fmt.Errorf("get replies: %w", err)
+		return nil, err
 	}
-	return conn, nil
+	if loaders := dataloader.GetLoaders(ctx); loaders != nil {
+		return loaders.RepliesByParentID.Load(ctx, repository.NewCommentPage(obj.ID, limit, after))
+	}
+	return r.CommentRepo.GetRepliesByParentID(ctx, obj.ID, limit, after)
+}
+
+func pageSize(first *int) (int, error) {
+	if first == nil {
+		return 10, nil
+	}
+	if *first < 1 || *first > repository.MaxPageSize {
+		return 0, fmt.Errorf("first must be between 1 and %d", repository.MaxPageSize)
+	}
+	return *first, nil
 }
 
 // CreatedAt is the resolver for the createdAt field.
@@ -177,9 +126,9 @@ func (r *postResolver) CreatedAt(ctx context.Context, obj *model.Post) (string, 
 
 // Posts is the resolver for the posts field.
 func (r *queryResolver) Posts(ctx context.Context, first *int, after *string) (*model.PostConnection, error) {
-	limit := 10
-	if first != nil && *first > 0 {
-		limit = *first
+	limit, err := pageSize(first)
+	if err != nil {
+		return nil, err
 	}
 	conn, err := r.PostRepo.GetPosts(ctx, limit, after)
 	if err != nil {
@@ -194,7 +143,7 @@ func (r *queryResolver) Post(ctx context.Context, id string) (*model.Post, error
 	if err != nil {
 		var errNotFound *repository.ErrPostNotFound
 		if errors.As(err, &errNotFound) {
-			return nil, nil 
+			return nil, nil
 		}
 		return nil, fmt.Errorf("get post: %w", err)
 	}

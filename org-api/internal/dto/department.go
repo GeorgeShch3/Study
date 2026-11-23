@@ -2,20 +2,17 @@ package dto
 
 import "time"
 
-
 type CreateDepartmentRequest struct {
 	Name     string `json:"name"`
 	ParentID *uint  `json:"parent_id"`
 }
 
-
 type UpdateDepartmentRequest struct {
 	Name           *string
 	ParentID       *uint
-	ParentIDIsNull bool  
-	ParentIDSet    bool 
+	ParentIDIsNull bool
+	ParentIDSet    bool
 }
-
 
 type DepartmentResponse struct {
 	ID        uint                  `json:"id"`

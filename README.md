@@ -11,5 +11,6 @@ Systems-programming, distributed-computing, and backend projects in C, C++, Go, 
 | `mpi` | C / C++ / MPI | Various tasks solved with MPI parallelism |
 | `posts-service` | Go | GraphQL service for posts and comments (in-memory / PostgreSQL) |
 | `shell` | C | A small Unix shell |
-| `test tasks` | Go | Interview test assignments: Geo KNN search and Org API |
+| [org-api](org-api) | Go | Organization structure API: departments, employees, transactions and cycle prevention |
+| `test tasks` | Go | Interview test assignment: Geo KNN search |
 | [taskmanager](taskmanager) | Java / Spring Boot | Team task management with project access control, review workflow, audit history, and PostgreSQL |

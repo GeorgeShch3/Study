@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/yourname/org-api/internal/model"
+	"github.com/GeorgeShch3/Study/org-api/internal/model"
 	"gorm.io/gorm"
 )
 
@@ -131,7 +131,6 @@ func (r *departmentRepo) GetTree(ctx context.Context, id uint, depth int) ([]Tre
 	err := r.db.WithContext(ctx).Raw(query, id, depth).Scan(&rows).Error
 	return rows, err
 }
-
 
 func (r *departmentRepo) ReassignEmployeesTx(ctx context.Context, tx *gorm.DB, fromDeptID, toDeptID uint) error {
 	return tx.WithContext(ctx).

@@ -4,9 +4,71 @@ A GraphQL service for posts and comments. Supports two storage backends (in-memo
 
 ## Requirements
 
-- Go 1.21+
-- Docker
-- PostgreSQL
+Run commands below from the `posts-service` directory of the cloned repository.
+
+- Native launch: Go 1.21+; PostgreSQL is needed only for the postgres storage mode.
+- Container launch: Docker with the Compose plugin; local Go is not required.
+
+## Running
+
+In-memory, without a database:
+
+```bash
+go run ./server
+```
+
+Docker, in-memory:
+
+```bash
+docker compose --profile memory up --build
+```
+
+Docker, PostgreSQL:
+
+```bash
+docker compose --profile postgres up --build
+```
+
+Both modes publish the API and GraphQL playground at http://localhost:8080/.
+Run one mode at a time. PostgreSQL uses local port 5432. If ports are already
+occupied, set `APP_PORT` and `POSTGRES_PORT`, for example:
+
+```bash
+APP_PORT=18080 POSTGRES_PORT=15432 docker compose --profile postgres up --build
+```
+
+In this case use port 18080 in HTTP URLs and 15432 in native database URLs.
+Use the same variables for later Compose commands.
+
+Stop the selected mode:
+
+```bash
+docker compose --profile memory --profile postgres down
+```
+
+With a fresh Docker volume, PostgreSQL applies all SQL files in `migrations`
+automatically. With an existing volume, apply new SQL files explicitly; the
+current migrations are idempotent:
+
+```bash
+for migration in migrations/*.sql; do
+  docker compose --profile postgres exec -T postgres \
+    psql -U postgres -d postsdb -v ON_ERROR_STOP=1 < "$migration"
+done
+```
+
+Native launch against an existing PostgreSQL:
+
+```bash
+export DATABASE_URL='postgresql://postgres:password@localhost:5432/postsdb?sslmode=disable'
+for migration in migrations/*.sql; do
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration"
+done
+STORAGE=postgres go run ./server
+```
+
+The database `postsdb` must already exist. The native migration commands require
+`psql`. Credentials shown here are for local development.
 
 ## Environment Variables
 
@@ -15,26 +77,7 @@ A GraphQL service for posts and comments. Supports two storage backends (in-memo
 | STORAGE | memory | Storage backend: memory or postgres |
 | PORT | 8080 | HTTP server port |
 | DATABASE_URL | postgresql://postgres@localhost:5432/postsdb?sslmode=disable | PostgreSQL connection string |
-| TEST_DB_URL | — | Connection string for integration tests |
-
-## Running
-
-In-memory:
-`go run server/*.go`
-
-PostgreSQL:
-`STORAGE=postgres DATABASE_URL="postgresql://postgres:password@localhost:5432/postsdb?sslmode=disable" go run server/*.go`
-
-Docker in-memory:
-`docker compose --profile memory up --build`
-
-Docker PostgreSQL:
-`docker compose --profile postgres up --build`
-
-Stop Docker:
-`docker compose down`
-
-Once running, the GraphQL playground is available at http://localhost:8080/.
+| TEST_DB_URL | — | Separate PostgreSQL database for integration tests |
 
 ## Example Queries
 
@@ -123,24 +166,40 @@ mutation {
 
 ## Tests
 
-All tests:
+In-memory tests (including the GraphQL HTTP layer):
+
 ```bash
-go test ./test -v
+go test ./...
 ```
 
-Tests with PostgreSQL:
+Tests with PostgreSQL, starting from a fresh clone and Docker installation:
+
 ```bash
-docker compose up -d postgres
-docker exec -it posts-service-postgres psql -U postgres -c "CREATE DATABASE postsdb_test;"
-TEST_DB_URL="postgresql://postgres:password@localhost:5432/postsdb_test?sslmode=disable" go test ./test -v
+docker compose --profile postgres up -d --wait postgres
+docker compose --profile postgres exec -T postgres \
+  psql -U postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE postsdb_test;'
+for migration in migrations/*.sql; do
+  docker compose --profile postgres exec -T postgres \
+    psql -U postgres -d postsdb_test -v ON_ERROR_STOP=1 < "$migration"
+done
+TEST_DB_URL='postgresql://postgres:password@localhost:5432/postsdb_test?sslmode=disable' go test -count=1 ./...
 ```
 
-Coverage:
+Create `postsdb_test` only once. Tests truncate data; do not point `TEST_DB_URL`
+at an application database.
+
+Race detection and static checks:
+
 ```bash
-go test -cover ./...
+go test -race -count=1 ./...
+go vet ./...
 ```
 
----
+The PostgreSQL pagination regression test seeds 1,000 comments per parent and
+checks that a batch of two pages of size 10 transfers only 22 rows from the DB
+(including one lookahead row per page). It also checks deterministic ordering
+when timestamps are equal. Other tests cover independent cursors and limits,
+empty pages, GraphQL aliases, and cache isolation between requests.
 
 ## How It Works
 
@@ -155,18 +214,25 @@ go test -cover ./...
 
 **Storage selection** — at startup, `STORAGE` is read (memory or postgres). Both backends implement the same interfaces, so resolvers don't know which one they're working with.
 
-### DataLoader and the N+1 problem
+### DataLoader and pagination
 
-Without DataLoader: you request 10 posts — that's 1 query. For each post you need to load its comments — that's 10 more queries. 11 queries total.
+Loaders are created for each GraphQL operation. A cache key contains the parent
+ID, `first`, and `after`, so aliases requesting different pages do not share the
+wrong cached result. No cache is shared between HTTP requests.
 
-With DataLoader: the DataLoader accumulates post IDs over 2ms, then makes a single query for the comments of all posts at once. 2 queries total.
+The loaders wait 2 ms to batch concurrent loads. PostgreSQL receives the page
+keys in one query using `unnest` and `LATERAL`. For each parent it returns at most
+`first + 1` comments, rather than loading every comment and slicing in Go. The
+extra row determines `hasNextPage`; `totalCount` is counted separately inside
+the same SQL statement. Exact counts still require counting matching rows.
 
-Implementation: two loaders in `dataloader/dataloader.go`:
+Root comments are ordered by `(created_at, id)` descending; replies use ascending
+order. Cursors must belong to the same post or thread. Unknown or foreign
+cursors return an empty page with the parent's `totalCount`. Malformed UUID
+cursors produce an error. GraphQL `first` defaults to 10 and accepts 1–100 for
+posts, comments, and replies.
 
-- `CommentsByPostID` — collects post IDs
-- `RepliesByParentID` — collects comment IDs to load replies
-
-Both wait 2ms, gather the IDs, and make a single query to the database via the methods `GetCommentsByPostIDs` and `GetRepliesByParentIDs`.
+Composite indexes are defined in `migrations/002_comment_pagination.sql`.
 
 ### Subscriptions
 
